@@ -36,7 +36,7 @@ epic_wallet_impls = { path = "./impls", version = "3.3.2" }
 epic_wallet_libwallet = { path = "./libwallet", version = "3.3.2" }
 epic_wallet_controller = { path = "./controller", version = "3.3.2" }
 epic_wallet_config = { path = "./config", version = "3.3.2" }
-epic_wallet_util = { path = "./util", version = "3.3.2" }
+stack_epic_wallet_util = { path = "./util", version = "3.3.4" }
 
 [build-dependencies]
 built = "0.3"

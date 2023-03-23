@@ -35,5 +35,5 @@ regex = "1"
 tungstenite = {version="*", features = ["native-tls"] }
 
 
-epic_wallet_util = { path = "../util", version = "3.3.2" }
+stack_epic_wallet_util = { path = "../util", version = "3.3.4" }
 epic_wallet_config = { path = "../config", version = "3.3.2" }

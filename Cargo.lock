@@ -929,7 +929,6 @@ dependencies = [
  "clap",
  "ctrlc",
  "easy-jsonrpc",
- "epic_wallet_api",
  "epic_wallet_controller",
  "failure",
  "failure_derive",
@@ -942,6 +941,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
+ "stack_epic_wallet_api",
  "stack_epic_wallet_config",
  "stack_epic_wallet_impls",
  "stack_epic_wallet_libwallet",
@@ -950,36 +950,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "epic_wallet_api"
-version = "3.3.2"
-dependencies = [
- "base64 0.9.3",
- "chrono",
- "easy-jsonrpc-mw",
- "ed25519-dalek",
- "failure",
- "failure_derive",
- "log",
- "rand 0.5.6",
- "ring",
- "serde",
- "serde_derive",
- "serde_json",
- "stack_epic_wallet_config",
- "stack_epic_wallet_impls",
- "stack_epic_wallet_libwallet",
- "stack_epic_wallet_util",
- "tempfile",
- "uuid 0.7.4",
-]
-
-[[package]]
 name = "epic_wallet_controller"
 version = "3.3.2"
 dependencies = [
  "chrono",
  "easy-jsonrpc-mw",
- "epic_wallet_api",
  "failure",
  "failure_derive",
  "futures",
@@ -992,6 +967,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
+ "stack_epic_wallet_api",
  "stack_epic_wallet_config",
  "stack_epic_wallet_impls",
  "stack_epic_wallet_libwallet",
@@ -3477,6 +3453,30 @@ dependencies = [
  "walkdir",
  "zeroize",
  "zip",
+]
+
+[[package]]
+name = "stack_epic_wallet_api"
+version = "3.3.4"
+dependencies = [
+ "base64 0.9.3",
+ "chrono",
+ "easy-jsonrpc-mw",
+ "ed25519-dalek",
+ "failure",
+ "failure_derive",
+ "log",
+ "rand 0.5.6",
+ "ring",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "stack_epic_wallet_config",
+ "stack_epic_wallet_impls",
+ "stack_epic_wallet_libwallet",
+ "stack_epic_wallet_util",
+ "tempfile",
+ "uuid 0.7.4",
 ]
 
 [[package]]

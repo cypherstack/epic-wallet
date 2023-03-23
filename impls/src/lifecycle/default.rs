@@ -27,7 +27,7 @@ use crate::lifecycle::seed::WalletSeed;
 use crate::util::secp::key::SecretKey;
 use crate::util::ZeroingString;
 use crate::LMDBBackend;
-use epic_wallet_util::epic_util::logger::LoggingConfig;
+use stack_epic_wallet_util::stack_epic_util::logger::LoggingConfig;
 use failure::ResultExt;
 use std::fs;
 use std::path::PathBuf;

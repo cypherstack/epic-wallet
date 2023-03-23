@@ -14,12 +14,12 @@
 //! Functions to restore a wallet's outputs from just the master seed
 
 use crate::api_impl::owner_updater::StatusMessage;
-use crate::epic_core::global;
-use crate::epic_core::libtx::proof;
-use crate::epic_keychain::{Identifier, Keychain, SwitchCommitmentType};
-use crate::epic_util::secp::key::SecretKey;
-use crate::epic_util::secp::pedersen;
-use crate::epic_util::Mutex;
+use crate::stack_epic_core::global;
+use crate::stack_epic_core::libtx::proof;
+use crate::stack_epic_keychain::{Identifier, Keychain, SwitchCommitmentType};
+use crate::stack_epic_util::secp::key::SecretKey;
+use crate::stack_epic_util::secp::pedersen;
+use crate::stack_epic_util::Mutex;
 use crate::internal::{keys, updater};
 use crate::types::*;
 use crate::{wallet_lock, Error, OutputCommitMapping};
@@ -362,7 +362,7 @@ where
 		wallet_lock!(wallet_inst, w);
 		updater::retrieve_outputs(&mut **w, keychain_mask, true, false, None, None)?
 	};
-	
+
 	let mut missing_outs = vec![];
 	let mut accidental_spend_outs = vec![];
 	let mut locked_outs = vec![];

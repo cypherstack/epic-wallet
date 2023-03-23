@@ -15,10 +15,10 @@
 //! Functions defining wallet 'addresses', i.e. ed2559 keys based on
 //! a derivation path
 
-use crate::epic_util::from_hex;
-use crate::epic_util::secp::key::SecretKey;
+use crate::stack_epic_util::from_hex;
+use crate::stack_epic_util::secp::key::SecretKey;
 use crate::{Error, ErrorKind};
-use epic_wallet_util::epic_keychain::{ChildNumber, Identifier, Keychain, SwitchCommitmentType};
+use stack_epic_wallet_util::stack_epic_keychain::{ChildNumber, Identifier, Keychain, SwitchCommitmentType};
 
 use data_encoding::BASE32;
 use ed25519_dalek::PublicKey as DalekPublicKey;

@@ -16,8 +16,8 @@
 use strum::IntoEnumIterator;
 
 use crate::api_impl::owner::check_ttl;
-use crate::epic_keychain::Keychain;
-use crate::epic_util::secp::key::SecretKey;
+use crate::stack_epic_keychain::Keychain;
+use crate::stack_epic_util::secp::key::SecretKey;
 use crate::internal::{tx, updater};
 use crate::slate_versions::SlateVersion;
 use crate::{

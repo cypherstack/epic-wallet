@@ -15,9 +15,9 @@
 use super::VersionedSlate;
 use crate::crypto::verify_signature;
 use crate::crypto::Hex;
-use crate::epic_util::secp::key::SecretKey;
-use crate::epic_util::secp::pedersen::Commitment;
-use crate::epic_util::secp::Signature;
+use crate::stack_epic_util::secp::key::SecretKey;
+use crate::stack_epic_util::secp::pedersen::Commitment;
+use crate::stack_epic_util::secp::Signature;
 use crate::message::EncryptedMessage;
 
 use crate::{Address, EpicboxAddress};

@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use crate::base58::{FromBase58, ToBase58};
-use crate::epic_core::global::is_floonet;
-use crate::epic_util::secp::key::PublicKey;
-use crate::epic_util::secp::Secp256k1;
+use crate::stack_epic_core::global::is_floonet;
+use crate::stack_epic_util::secp::key::PublicKey;
+use crate::stack_epic_util::secp::Secp256k1;
 use crate::error::{Error, ErrorKind};
 use regex::Regex;
 use std::fmt::{self, Debug, Display};

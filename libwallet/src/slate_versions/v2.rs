@@ -35,13 +35,13 @@
 //!    orig_version: u16,
 //!    block_header_version: u16,
 
-use crate::epic_core::core::transaction::OutputFeatures;
-use crate::epic_core::libtx::secp_ser;
-use crate::epic_keychain::{BlindingFactor, Identifier};
-use crate::epic_util::secp;
-use crate::epic_util::secp::key::PublicKey;
-use crate::epic_util::secp::pedersen::{Commitment, RangeProof};
-use crate::epic_util::secp::Signature;
+use crate::stack_epic_core::core::transaction::OutputFeatures;
+use crate::stack_epic_core::libtx::secp_ser;
+use crate::stack_epic_keychain::{BlindingFactor, Identifier};
+use crate::stack_epic_util::secp;
+use crate::stack_epic_util::secp::key::PublicKey;
+use crate::stack_epic_util::secp::pedersen::{Commitment, RangeProof};
+use crate::stack_epic_util::secp::Signature;
 use crate::slate::CompatKernelFeatures;
 use crate::slate_versions::v3::{OutputV3, TxKernelV3};
 use crate::types::CbData;

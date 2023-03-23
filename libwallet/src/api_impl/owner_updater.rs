@@ -19,9 +19,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use crate::epic_keychain::Keychain;
-use crate::epic_util::secp::key::SecretKey;
-use crate::epic_util::Mutex;
+use crate::stack_epic_keychain::Keychain;
+use crate::stack_epic_util::secp::key::SecretKey;
+use crate::stack_epic_util::Mutex;
 
 use crate::api_impl::owner;
 use crate::types::NodeClient;

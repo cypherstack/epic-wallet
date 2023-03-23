@@ -18,16 +18,16 @@
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::epic_core::consensus::{cumulative_reward_foundation, reward};
-use crate::epic_core::core::{Output, TxKernel};
-use crate::epic_core::global;
-use crate::epic_core::libtx::proof::ProofBuilder;
-use crate::epic_core::libtx::reward;
-use crate::epic_keychain::{Identifier, Keychain, SwitchCommitmentType};
-use crate::epic_util as util;
-use crate::epic_util::secp::key::SecretKey;
-use crate::epic_util::secp::pedersen;
-use crate::epic_util::static_secp_instance;
+use crate::stack_epic_core::consensus::{cumulative_reward_foundation, reward};
+use crate::stack_epic_core::core::{Output, TxKernel};
+use crate::stack_epic_core::global;
+use crate::stack_epic_core::libtx::proof::ProofBuilder;
+use crate::stack_epic_core::libtx::reward;
+use crate::stack_epic_keychain::{Identifier, Keychain, SwitchCommitmentType};
+use crate::stack_epic_util as util;
+use crate::stack_epic_util::secp::key::SecretKey;
+use crate::stack_epic_util::secp::pedersen;
+use crate::stack_epic_util::static_secp_instance;
 use crate::error::Error;
 use crate::internal::keys;
 use crate::types::{

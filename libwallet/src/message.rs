@@ -15,8 +15,8 @@
 use crate::EpicboxAddress;
 
 use crate::crypto::{from_hex, to_hex};
-use crate::epic_util::secp::key::{PublicKey, SecretKey};
-use crate::epic_util::secp::Secp256k1;
+use crate::stack_epic_util::secp::key::{PublicKey, SecretKey};
+use crate::stack_epic_util::secp::Secp256k1;
 use crate::{Error, ErrorKind};
 use rand::thread_rng;
 use rand::Rng;

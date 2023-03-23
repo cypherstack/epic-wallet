@@ -17,14 +17,14 @@
 //! * Addition of payment_proof (PaymentInfo struct)
 //! * Addition of a u64 ttl_cutoff_height field
 
-use crate::epic_core::core::transaction::OutputFeatures;
-use crate::epic_core::libtx::secp_ser;
-use crate::epic_core::map_vec;
-use crate::epic_keychain::{BlindingFactor, Identifier};
-use crate::epic_util::secp;
-use crate::epic_util::secp::key::PublicKey;
-use crate::epic_util::secp::pedersen::{Commitment, RangeProof};
-use crate::epic_util::secp::Signature;
+use crate::stack_epic_core::core::transaction::OutputFeatures;
+use crate::stack_epic_core::libtx::secp_ser;
+use crate::stack_epic_core::map_vec;
+use crate::stack_epic_keychain::{BlindingFactor, Identifier};
+use crate::stack_epic_util::secp;
+use crate::stack_epic_util::secp::key::PublicKey;
+use crate::stack_epic_util::secp::pedersen::{Commitment, RangeProof};
+use crate::stack_epic_util::secp::Signature;
 use crate::slate::CompatKernelFeatures;
 use crate::slate_versions::ser as dalek_ser;
 use ed25519_dalek::PublicKey as DalekPublicKey;

@@ -21,14 +21,14 @@ extern crate prettytable;
 extern crate log;
 #[macro_use]
 extern crate lazy_static;
-use epic_wallet_api as apiwallet;
-use epic_wallet_config as config;
-use epic_wallet_impls as impls;
-use epic_wallet_libwallet as libwallet;
-use epic_wallet_util::epic_api as api;
-use epic_wallet_util::epic_core as core;
-use epic_wallet_util::epic_keychain as keychain;
-use epic_wallet_util::epic_util as util;
+use stack_epic_wallet_api as apiwallet;
+use stack_epic_wallet_config as config;
+use stack_epic_wallet_impls as impls;
+use stack_epic_wallet_libwallet as libwallet;
+use stack_epic_wallet_util::stack_epic_api as api;
+use stack_epic_wallet_util::stack_epic_core as core;
+use stack_epic_wallet_util::stack_epic_keychain as keychain;
+use stack_epic_wallet_util::stack_epic_util as util;
 use failure;
 
 pub mod command;

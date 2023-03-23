@@ -1,6 +1,6 @@
 [package]
-name = "epic_wallet_controller"
-version = "3.3.2"
+name = "stack_epic_wallet_controller"
+version = "3.3.4"
 authors = ["Epic Developers <epiccash@brickabode.com>"]
 description = "Controllers for epic wallet instantiation"
 license = "Apache-2.0"

@@ -1,11 +1,10 @@
 [package]
-name = "epic_wallet_impls"
-version = "3.3.2"
+name = "stack_epic_wallet_impls"
+version = "3.3.4"
 authors = ["Epic Developers <epiccash@brickabode.com>"]
 description = "Concrete types derived from libwallet traits"
 license = "Apache-2.0"
-repository = "https://github.com/EpicCash/epic-wallet"
-keywords = ["crypto", "epic", "mimblewimble"]
+repository = "https://github.com/cypherstack/epic-wallet"
 exclude = ["**/*.epic", "**/*.epic2"]
 edition = "2018"
 

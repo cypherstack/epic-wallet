@@ -1,11 +1,10 @@
 [package]
-name = "epic_wallet_libwallet"
-version = "3.3.2"
+name = "stack_epic_wallet_libwallet"
+version = "3.3.4"
 authors = ["Epic Developers <epiccash@brickabode.com>"]
 description = "Simple, private and scalable cryptocurrency implementation based on the MimbleWimble chain format."
 license = "Apache-2.0"
-repository = "https://github.com/EpicCash/epic-wallet"
-keywords = ["crypto", "epic", "mimblewimble"]
+repository = "https://github.com/cypherstack/epic-wallet"
 exclude = ["**/*.epic", "**/*.epic2"]
 edition = "2018"
 
@@ -32,7 +31,7 @@ sha2 = "0.9"
 digest = "0.9"
 ring = "0.13"
 regex = "1"
-tungstenite = {version="*", features = ["native-tls"] }
+tungstenite = {version="0.18.0", features = ["native-tls"] }
 
 
 stack_epic_wallet_util = { path = "../util", version = "3.3.4" }

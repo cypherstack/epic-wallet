@@ -23,8 +23,8 @@
 #[macro_use]
 extern crate serde_derive;
 
-use epic_wallet_util::epic_core as core;
-use epic_wallet_util::epic_util as util;
+use stack_epic_wallet_util::stack_epic_core as core;
+use stack_epic_wallet_util::stack_epic_util as util;
 
 mod comments;
 pub mod config;

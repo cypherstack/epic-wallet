@@ -1,6 +1,6 @@
 [package]
 name = "stack_epic_wallet_controller"
-version = "3.3.4"
+version = "3.3.5"
 authors = ["Epic Developers <epiccash@brickabode.com>"]
 description = "Controllers for epic wallet instantiation"
 license = "Apache-2.0"
@@ -33,7 +33,7 @@ lazy_static = "1"
 tungstenite = {version="0.18.0", features = ["native-tls"] }
 
 stack_epic_wallet_util = { path = "../util", version = "3.3.4" }
-stack_epic_wallet_api = { path = "../api", version = "3.3.4" }
-stack_epic_wallet_impls = { path = "../impls", version = "3.3.4" }
+stack_epic_wallet_api = { path = "../api", version = "3.3.5" }
+stack_epic_wallet_impls = { path = "../impls", version = "3.3.5" }
 stack_epic_wallet_libwallet = { path = "../libwallet", version = "3.3.4" }
 stack_epic_wallet_config = { path = "../config", version = "3.3.4" }

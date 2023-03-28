@@ -1,6 +1,6 @@
 [package]
 name = "stack_epic_wallet_impls"
-version = "3.3.4"
+version = "3.3.5"
 authors = ["Epic Developers <epiccash@brickabode.com>"]
 description = "Concrete types derived from libwallet traits"
 license = "Apache-2.0"

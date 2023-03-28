@@ -3494,7 +3494,7 @@ dependencies = [
 
 [[package]]
 name = "stack_epic_wallet_impls"
-version = "3.3.4"
+version = "3.3.5"
 dependencies = [
  "bitvec",
  "blake2-rfc",

@@ -793,8 +793,8 @@ impl EpicboxBroker {
 
 		let signature = sign_challenge(&challenge, secret_key)?.to_hex();
 		let request = ProtocolRequest::PostSlate {
-			from: from.stripped(),
-			to: to.stripped(),
+			from: format!("{}@{}", from.stripped(), from.domain),
+			to: format!("{}@{}", to.stripped(), to.domain),
 			str: message_ser,
 			signature,
 		};

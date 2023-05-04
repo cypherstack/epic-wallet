@@ -13,8 +13,8 @@
 // limitations under the License.
 
 //! Wallet key management functions
-use crate::epic_keychain::{ChildNumber, ExtKeychain, Identifier, Keychain};
-use crate::epic_util::secp::key::SecretKey;
+use crate::stack_epic_keychain::{ChildNumber, ExtKeychain, Identifier, Keychain};
+use crate::stack_epic_util::secp::key::SecretKey;
 use crate::error::{Error, ErrorKind};
 use crate::types::{AcctPathMapping, NodeClient, WalletBackend};
 

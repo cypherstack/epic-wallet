@@ -22,11 +22,11 @@
 #![deny(unused_mut)]
 //#![warn(missing_docs)]
 
-use epic_wallet_config as config;
-use epic_wallet_util::epic_core;
-use epic_wallet_util::epic_keychain;
-use epic_wallet_util::epic_store;
-use epic_wallet_util::epic_util;
+use stack_epic_wallet_config as config;
+use stack_epic_wallet_util::stack_epic_core;
+use stack_epic_wallet_util::stack_epic_keychain;
+use stack_epic_wallet_util::stack_epic_store;
+use stack_epic_wallet_util::stack_epic_util;
 
 use blake2_rfc as blake2;
 

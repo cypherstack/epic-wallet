@@ -16,16 +16,16 @@
 
 use uuid::Uuid;
 
-use crate::epic_core::core::hash::Hashed;
-use crate::epic_core::core::Transaction;
-use crate::epic_core::ser;
-use crate::epic_util;
-use crate::epic_util::secp::key::SecretKey;
-use crate::epic_util::Mutex;
+use crate::stack_epic_core::core::hash::Hashed;
+use crate::stack_epic_core::core::Transaction;
+use crate::stack_epic_core::ser;
+use crate::stack_epic_util;
+use crate::stack_epic_util::secp::key::SecretKey;
+use crate::stack_epic_util::Mutex;
 
 use crate::api_impl::owner_updater::StatusMessage;
-use crate::epic_keychain::{Identifier, Keychain};
-use crate::epic_util::secp::key::PublicKey;
+use crate::stack_epic_keychain::{Identifier, Keychain};
+use crate::stack_epic_util::secp::key::PublicKey;
 use crate::epicbox_address::EpicboxAddress;
 use crate::internal::{keys, scan, selection, tx, updater};
 use crate::slate::{PaymentInfo, Slate};
@@ -651,7 +651,7 @@ pub fn post_tx<'a, C>(client: &C, tx: &Transaction, fluff: bool) -> Result<(), E
 where
 	C: NodeClient + 'a,
 {
-	let tx_hex = epic_util::to_hex(ser::ser_vec(tx, ser::ProtocolVersion(1)).unwrap());
+	let tx_hex = stack_epic_util::to_hex(ser::ser_vec(tx, ser::ProtocolVersion(1)).unwrap());
 	let res = client.post_tx(&TxWrapper { tx_hex }, fluff);
 	if let Err(e) = res {
 		error!("api: post_tx: failed with error: {}", e);

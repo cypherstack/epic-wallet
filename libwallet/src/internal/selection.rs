@@ -15,14 +15,14 @@
 //! Selection of inputs for building transactions
 
 use crate::address;
-use crate::epic_core::core::amount_to_hr_string;
-use crate::epic_core::libtx::{
+use crate::stack_epic_core::core::amount_to_hr_string;
+use crate::stack_epic_core::libtx::{
 	build,
 	proof::{ProofBuild, ProofBuilder},
 	tx_fee,
 };
-use crate::epic_keychain::{Identifier, Keychain};
-use crate::epic_util::secp::key::SecretKey;
+use crate::stack_epic_keychain::{Identifier, Keychain};
+use crate::stack_epic_util::secp::key::SecretKey;
 use crate::error::{Error, ErrorKind};
 use crate::internal::keys;
 use crate::slate::Slate;

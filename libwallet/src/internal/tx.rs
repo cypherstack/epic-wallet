@@ -18,12 +18,12 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io::Cursor;
 use uuid::Uuid;
 
-use crate::epic_core::consensus::valid_header_version;
-use crate::epic_core::core::HeaderVersion;
-use crate::epic_keychain::{Identifier, Keychain};
-use crate::epic_util::secp::key::SecretKey;
-use crate::epic_util::secp::pedersen;
-use crate::epic_util::Mutex;
+use crate::stack_epic_core::consensus::valid_header_version;
+use crate::stack_epic_core::core::HeaderVersion;
+use crate::stack_epic_keychain::{Identifier, Keychain};
+use crate::stack_epic_util::secp::key::SecretKey;
+use crate::stack_epic_util::secp::pedersen;
+use crate::stack_epic_util::Mutex;
 use crate::internal::{selection, updater};
 use crate::slate::Slate;
 use crate::types::{Context, NodeClient, StoredProofInfo, TxLogEntryType, WalletBackend};

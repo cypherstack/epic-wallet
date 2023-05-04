@@ -16,15 +16,15 @@
 //! implementation
 
 use crate::config::{EpicboxConfig, TorConfig, WalletConfig};
-use crate::epic_core::core::hash::Hash;
-use crate::epic_core::core::{Output, Transaction, TxKernel};
-use crate::epic_core::libtx::{aggsig, secp_ser};
-use crate::epic_core::{global, ser};
-use crate::epic_keychain::{Identifier, Keychain};
-use crate::epic_util::logger::LoggingConfig;
-use crate::epic_util::secp::key::{PublicKey, SecretKey};
-use crate::epic_util::secp::{self, pedersen, Secp256k1};
-use crate::epic_util::ZeroingString;
+use crate::stack_epic_core::core::hash::Hash;
+use crate::stack_epic_core::core::{Output, Transaction, TxKernel};
+use crate::stack_epic_core::libtx::{aggsig, secp_ser};
+use crate::stack_epic_core::{global, ser};
+use crate::stack_epic_keychain::{Identifier, Keychain};
+use crate::stack_epic_util::logger::LoggingConfig;
+use crate::stack_epic_util::secp::key::{PublicKey, SecretKey};
+use crate::stack_epic_util::secp::{self, pedersen, Secp256k1};
+use crate::stack_epic_util::ZeroingString;
 use crate::error::{Error, ErrorKind};
 use crate::slate::ParticipantMessages;
 use crate::slate_versions::ser as dalek_ser;

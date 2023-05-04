@@ -14,8 +14,8 @@
 
 //! Types specific to the wallet api, mostly argument serialization
 
-use crate::epic_core::libtx::secp_ser;
-use crate::epic_util::secp::pedersen;
+use crate::stack_epic_core::libtx::secp_ser;
+use crate::stack_epic_util::secp::pedersen;
 use crate::slate_versions::ser as dalek_ser;
 use crate::slate_versions::SlateVersion;
 use crate::types::OutputData;
@@ -23,7 +23,7 @@ use crate::types::OutputData;
 use ed25519_dalek::PublicKey as DalekPublicKey;
 use ed25519_dalek::Signature as DalekSignature;
 
-pub use crate::epic_core::core::block_fees::BlockFees;
+pub use crate::stack_epic_core::core::block_fees::BlockFees;
 /// Send TX API Args
 // TODO: This is here to ensure the legacy V1 API remains intact
 // remove this when v1 api is removed

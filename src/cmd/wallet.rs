@@ -15,10 +15,10 @@
 use crate::cmd::wallet_args;
 use crate::config::GlobalWalletConfig;
 use clap::ArgMatches;
-use epic_wallet_impls::HTTPNodeClient;
-use epic_wallet_libwallet::NodeClient;
 use log::debug;
 use semver::Version;
+use stack_epic_wallet_impls::HTTPNodeClient;
+use stack_epic_wallet_libwallet::NodeClient;
 use std::thread;
 use std::time::Duration;
 

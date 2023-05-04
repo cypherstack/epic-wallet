@@ -18,24 +18,24 @@ use crate::util::file::get_first_line;
 use crate::util::{to_hex, Mutex, ZeroingString};
 /// Argument parsing and error handling for wallet commands
 use clap::ArgMatches;
-use epic_wallet_config::{EpicboxConfig, TorConfig, WalletConfig};
-use epic_wallet_controller::command;
-use epic_wallet_controller::{Error, ErrorKind};
-use epic_wallet_impls::tor::config::is_tor_address;
-use epic_wallet_impls::{DefaultLCProvider, DefaultWalletImpl};
-use epic_wallet_impls::{PathToSlate, SlateGetter as _};
-use epic_wallet_libwallet::Slate;
-use epic_wallet_libwallet::{
-	address, IssueInvoiceTxArgs, NodeClient, WalletInst, WalletLCProvider,
-};
-use epic_wallet_util::epic_core as core;
-use epic_wallet_util::epic_core::core::amount_to_hr_string;
-use epic_wallet_util::epic_core::global;
-use epic_wallet_util::epic_keychain as keychain;
 use failure::Fail;
 use linefeed::terminal::Signal;
 use linefeed::{Interface, ReadResult};
 use rpassword;
+use stack_epic_wallet_config::{EpicboxConfig, TorConfig, WalletConfig};
+use stack_epic_wallet_controller::command;
+use stack_epic_wallet_controller::{Error, ErrorKind};
+use stack_epic_wallet_impls::tor::config::is_tor_address;
+use stack_epic_wallet_impls::{DefaultLCProvider, DefaultWalletImpl};
+use stack_epic_wallet_impls::{PathToSlate, SlateGetter as _};
+use stack_epic_wallet_libwallet::Slate;
+use stack_epic_wallet_libwallet::{
+	address, IssueInvoiceTxArgs, NodeClient, WalletInst, WalletLCProvider,
+};
+use stack_epic_wallet_util::stack_epic_core as core;
+use stack_epic_wallet_util::stack_epic_core::core::amount_to_hr_string;
+use stack_epic_wallet_util::stack_epic_core::global;
+use stack_epic_wallet_util::stack_epic_keychain as keychain;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

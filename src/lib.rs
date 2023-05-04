@@ -11,8 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use epic_wallet_config as config;
-use epic_wallet_util::epic_api as api;
-use epic_wallet_util::epic_util as util;
+use stack_epic_wallet_config as config;
+use stack_epic_wallet_util::stack_epic_api as api;
+use stack_epic_wallet_util::stack_epic_util as util;
 
 pub mod cmd;

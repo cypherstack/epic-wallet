@@ -601,14 +601,14 @@ pub fn run_doctest_foreign(
 	init_invoice_tx: bool,
 ) -> Result<Option<serde_json::Value>, String> {
 	use easy_jsonrpc_mw::Handler;
-	use epic_wallet_impls::test_framework::{self, LocalWalletClient, WalletProxy};
-	use epic_wallet_impls::{DefaultLCProvider, DefaultWalletImpl};
-	use epic_wallet_libwallet::{api_impl, WalletInst};
-	use epic_wallet_util::epic_keychain::ExtKeychain;
+	use stack_epic_wallet_impls::test_framework::{self, LocalWalletClient, WalletProxy};
+	use stack_epic_wallet_impls::{DefaultLCProvider, DefaultWalletImpl};
+	use stack_epic_wallet_libwallet::{api_impl, WalletInst};
+	use stack_epic_wallet_util::stack_epic_keychain::ExtKeychain;
 
 	use crate::core::global::ChainTypes;
 	use crate::core::{core::feijoada, global};
-	use epic_wallet_util::epic_util as util;
+	use stack_epic_wallet_util::stack_epic_util as util;
 
 	use std::sync::Arc;
 	use util::Mutex;

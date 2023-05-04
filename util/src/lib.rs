@@ -20,9 +20,9 @@
 #![deny(unused_mut)]
 #![warn(missing_docs)]
 
-pub use epic_api;
-pub use epic_chain;
-pub use epic_core;
-pub use epic_keychain;
-pub use epic_store;
-pub use epic_util;
+pub use stack_epic_api;
+pub use stack_epic_chain;
+pub use stack_epic_core;
+pub use stack_epic_keychain;
+pub use stack_epic_store;
+pub use stack_epic_util;

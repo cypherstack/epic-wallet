@@ -23,14 +23,14 @@ extern crate serde_derive;
 #[macro_use]
 extern crate log;
 
-use epic_wallet_config as config;
-use epic_wallet_libwallet as libwallet;
-use epic_wallet_util::epic_api as api;
-use epic_wallet_util::epic_chain as chain;
-use epic_wallet_util::epic_core as core;
-use epic_wallet_util::epic_keychain as keychain;
-use epic_wallet_util::epic_store as store;
-use epic_wallet_util::epic_util as util;
+use stack_epic_wallet_config as config;
+use stack_epic_wallet_libwallet as libwallet;
+use stack_epic_wallet_util::stack_epic_api as api;
+use stack_epic_wallet_util::stack_epic_chain as chain;
+use stack_epic_wallet_util::stack_epic_core as core;
+use stack_epic_wallet_util::stack_epic_keychain as keychain;
+use stack_epic_wallet_util::stack_epic_store as store;
+use stack_epic_wallet_util::stack_epic_util as util;
 
 mod adapters;
 mod backends;

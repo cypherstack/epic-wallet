@@ -14,7 +14,7 @@
 
 //! Responsible for handling the serialization and deserialization of structs common to the database
 
-use epic_wallet_libwallet::{
+use stack_epic_wallet_libwallet::{
 	AcctPathMapping, Context, OutputData, ScannedBlockInfo, TxLogEntry, WalletInitStatus,
 };
 use serde::Serialize;

@@ -44,7 +44,7 @@ use std::thread::JoinHandle;
 
 use crate::libwallet::api_impl::foreign;
 use crate::libwallet::api_impl::owner;
-use epic_wallet_util::epic_core::core::amount_to_hr_string;
+use stack_epic_wallet_util::stack_epic_core::core::amount_to_hr_string;
 use std::net::TcpStream;
 use std::string::ToString;
 use std::sync::mpsc::{channel, Receiver, Sender};

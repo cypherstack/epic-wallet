@@ -1,11 +1,10 @@
 [package]
-name = "epic_wallet_config"
+name = "stack_epic_wallet_config"
 version = "3.6.0"
 authors = ["Epic Developers <info@epiccash.com>"]
 description = "Configuration for epic wallet, a simple, private and scalable cryptocurrency implementation based on the MimbleWimble chain format."
 license = "Apache-2.0"
-repository = "https://github.com/EpicCash/epic-wallet"
-keywords = ["crypto", "epic", "mimblewimble"]
+repository = "https://github.com/cypherstack/epic-wallet"
 workspace = ".."
 edition = "2021"
 
@@ -16,7 +15,7 @@ serde_derive = "1"
 toml = "0.4"
 dirs = "1.0.3"
 
-epic_wallet_util = { path = "../util", version = "3.6.0" }
+epic_wallet_util = { package = "stack_epic_wallet_util", path = "../util", version = "3.6.0" }
 
 [dev-dependencies]
 pretty_assertions = "0.5.1"

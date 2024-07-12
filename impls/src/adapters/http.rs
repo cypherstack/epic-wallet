@@ -74,36 +74,47 @@ impl HttpSlateSender {
 		});
 
 		let res: String = self.post(url, None, req).map_err(|e| {
-			let mut report = format!("Performing version check (is recipient listening?): {}", e);
-			let err_string = format!("{}", e);
-			if err_string.contains("404") {
-				// Report that the other version of the wallet is out of date
-				report = format!(
-					"Other wallet is incompatible and requires an upgrade. \
-					 Please urge the other wallet owner to upgrade and try the transaction again."
-				);
-			}
+	let mut report = format!("Performing version check (is recipient listening?): {}", e);
+	let err_string = format!("{}", e);
+	if err_string.contains("404") {
+		// Report that the other version of the wallet is out of date
+		report = format!(
+			"Other wallet is incompatible and requires an upgrade. \
+			 Please urge the other wallet owner to upgrade and try the transaction again."
+		);
+	}
+	error!("{}", report);
+	Error::ClientCallback(report)
+	})?;
+	
+	debug!("Raw response: {}", res);
+	
+	let res: Value = match serde_json::from_str(&res) {
+		Ok(val) => val,
+		Err(e) => {
+			let report = format!("Failed to parse response as JSON: {}. Response: {}", e, res);
 			error!("{}", report);
-			ErrorKind::ClientCallback(report)
-		})?;
-
-		let res: Value = serde_json::from_str(&res).unwrap();
-		trace!("Response: {}", res);
-		if res["error"] != json!(null) {
-			let report = format!(
-				"Posting transaction slate: Error: {}, Message: {}",
-				res["error"]["code"], res["error"]["message"]
-			);
-			error!("{}", report);
-			return Err(ErrorKind::ClientCallback(report).into());
+			return Err(Error::ClientCallback(report).into());
 		}
+	};
+	
+	trace!("Response: {}", res);
+	if res["error"] != json!(null) {
+		let report = format!(
+			"Posting transaction slate: Error: {}, Message: {}",
+			res["error"]["code"], res["error"]["message"]
+		);
+		error!("{}", report);
+		return Err(Error::ClientCallback(report).into());
+	}
+	
+	let resp_value = res["result"]["Ok"].clone();
+	trace!("resp_value: {}", resp_value.clone());
+	let foreign_api_version: u16 =
+		serde_json::from_value(resp_value["foreign_api_version"].clone()).unwrap();
+	let supported_slate_versions: Vec<String> =
+		serde_json::from_value(resp_value["supported_slate_versions"].clone()).unwrap();
 
-		let resp_value = res["result"]["Ok"].clone();
-		trace!("resp_value: {}", resp_value.clone());
-		let foreign_api_version: u16 =
-			serde_json::from_value(resp_value["foreign_api_version"].clone()).unwrap();
-		let supported_slate_versions: Vec<String> =
-			serde_json::from_value(resp_value["supported_slate_versions"].clone()).unwrap();
 
 		// trivial tests for now, but will be expanded later
 		if foreign_api_version < 2 {

@@ -18,18 +18,20 @@ use chrono::prelude::*;
 use ed25519_dalek::PublicKey as DalekPublicKey;
 use uuid::Uuid;
 
-use crate::config::{TorConfig, WalletConfig};
+use crate::config::{EpicboxConfig, TorConfig, WalletConfig};
 use crate::core::core::Transaction;
 use crate::core::global;
 use crate::impls::create_sender;
+use crate::impls::EpicboxChannel;
 use crate::keychain::{Identifier, Keychain};
 use crate::libwallet::api_impl::owner_updater::{start_updater_log_thread, StatusMessage};
 use crate::libwallet::api_impl::{owner, owner_updater};
 use crate::libwallet::{
-	address, AcctPathMapping, Error, ErrorKind, InitTxArgs, IssueInvoiceTxArgs, NodeClient,
+	address, AcctPathMapping, EpicboxAddress, Error, InitTxArgs, IssueInvoiceTxArgs, NodeClient,
 	NodeHeightResult, OutputCommitMapping, PaymentProof, Slate, TxLogEntry, WalletInfo, WalletInst,
 	WalletLCProvider,
 };
+
 use crate::util::logger::LoggingConfig;
 use crate::util::secp::key::SecretKey;
 use crate::util::{from_hex, static_secp_instance, Mutex, ZeroingString};
@@ -77,6 +79,8 @@ where
 	/// Optional TOR configuration, holding address of sender and
 	/// data directory
 	tor_config: Mutex<Option<TorConfig>>,
+	/// epicbox configuration, holding epicbox relay server settings
+	epicbox_config: Mutex<Option<EpicboxConfig>>,
 }
 
 impl<L, C, K> Owner<L, C, K>
@@ -131,7 +135,7 @@ where
 	///
 	/// // A NodeClient must first be created to handle communication between
 	/// // the wallet and the node.
-	/// let node_client = HTTPNodeClient::new(&wallet_config.check_node_api_http_addr, None);
+	/// let node_client = HTTPNodeClient::new(&wallet_config.check_node_api_http_addr, None).unwrap();
 	///
 	/// // impls::DefaultWalletImpl is provided for convenience in instantiating the wallet
 	/// // It contains the LMDBBackend, DefaultLCProvider (lifecycle) and ExtKeychain used
@@ -139,7 +143,7 @@ where
 	/// // These traits can be replaced with alternative implementations if desired
 	///
 	/// let mut wallet = Box::new(DefaultWalletImpl::<'static, HTTPNodeClient>::new(node_client.clone()).unwrap())
-	///		as Box<WalletInst<'static, DefaultLCProvider<HTTPNodeClient, ExtKeychain>, HTTPNodeClient, ExtKeychain>>;
+	///		as Box<dyn WalletInst<'static, DefaultLCProvider<HTTPNodeClient, ExtKeychain>, HTTPNodeClient, ExtKeychain>>;
 	///
 	/// // Wallet LifeCycle Provider provides all functions init wallet and work with seeds, etc...
 	/// let lc = wallet.lc_provider().unwrap();
@@ -155,14 +159,15 @@ where
 	/// // All wallet functions operate on an Arc::Mutex to allow multithreading where needed
 	/// let mut wallet = Arc::new(Mutex::new(wallet));
 	///
-	/// let api_owner = Owner::new(wallet.clone());
+	/// let api_owner = Owner::new(wallet.clone(), None);
 	/// // .. perform wallet operations
 	///
 	/// ```
 
-	pub fn new(wallet_inst: Arc<Mutex<Box<dyn WalletInst<'static, L, C, K>>>>) -> Self {
-		let (tx, rx) = channel();
-
+	pub fn new(
+		wallet_inst: Arc<Mutex<Box<dyn WalletInst<'static, L, C, K>>>>,
+		custom_channel: Option<Sender<StatusMessage>>,
+	) -> Self {
 		let updater_running = Arc::new(AtomicBool::new(false));
 		let updater = Arc::new(Mutex::new(owner_updater::Updater::new(
 			wallet_inst.clone(),
@@ -170,7 +175,14 @@ where
 		)));
 
 		let updater_messages = Arc::new(Mutex::new(vec![]));
-		let _ = start_updater_log_thread(rx, updater_messages.clone());
+		let tx = match custom_channel {
+			Some(c) => c,
+			None => {
+				let (tx, rx) = channel();
+				let _ = start_updater_log_thread(rx, updater_messages.clone());
+				tx
+			}
+		};
 
 		Owner {
 			wallet_inst,
@@ -181,6 +193,7 @@ where
 			status_tx: Mutex::new(Some(tx)),
 			updater_messages,
 			tor_config: Mutex::new(None),
+			epicbox_config: Mutex::new(None),
 		}
 	}
 
@@ -195,6 +208,19 @@ where
 	pub fn set_tor_config(&self, tor_config: Option<TorConfig>) {
 		let mut lock = self.tor_config.lock();
 		*lock = tor_config;
+	}
+
+	/// Set the Epicbox configuration for this instance of the OwnerAPI, used during
+	/// `init_send_tx` when send args are present and a Epicbox address is specified
+	///
+	/// # Arguments
+	/// * `epicbox_config` - The optional [EpicboxConfig](#) to use
+	/// # Returns
+	/// * Nothing
+
+	pub fn set_epicbox_config(&self, epicbox_config: Option<EpicboxConfig>) {
+		let mut lock = self.epicbox_config.lock();
+		*lock = epicbox_config;
 	}
 
 	/// Returns a list of accounts stored in the wallet (i.e. mappings between
@@ -219,7 +245,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let api_owner = Owner::new(wallet.clone());
+	/// let api_owner = Owner::new(wallet.clone(), None);
 	///
 	/// let result = api_owner.accounts(None);
 	///
@@ -270,7 +296,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let api_owner = Owner::new(wallet.clone());
+	/// let api_owner = Owner::new(wallet.clone(), None);
 	///
 	/// let result = api_owner.create_account_path(None, "account1");
 	///
@@ -317,7 +343,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let api_owner = Owner::new(wallet.clone());
+	/// let api_owner = Owner::new(wallet.clone(), None);
 	///
 	/// let result = api_owner.create_account_path(None, "account1");
 	///
@@ -373,12 +399,12 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let api_owner = Owner::new(wallet.clone());
+	/// let api_owner = Owner::new(wallet.clone(), None);
 	/// let show_spent = false;
 	/// let update_from_node = true;
 	/// let tx_id = None;
 	///
-	/// let result = api_owner.retrieve_outputs(None, show_spent, update_from_node, tx_id);
+	/// let result = api_owner.retrieve_outputs(None, show_spent, update_from_node, false, tx_id);
 	///
 	/// if let Ok((was_updated, output_mappings)) = result {
 	///		//...
@@ -443,7 +469,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let api_owner = Owner::new(wallet.clone());
+	/// let api_owner = Owner::new(wallet.clone(), None);
 	/// let update_from_node = true;
 	/// let tx_id = None;
 	/// let tx_slate_id = None;
@@ -484,8 +510,8 @@ where
 				.1
 				.into_iter()
 				.map(|mut t| {
-					t.confirmation_ts = Some(Utc.ymd(2019, 1, 15).and_hms(16, 1, 26));
-					t.creation_ts = Utc.ymd(2019, 1, 15).and_hms(16, 1, 26);
+					t.confirmation_ts = Some(Utc.with_ymd_and_hms(2019, 1, 15, 16, 1, 26).unwrap());
+					t.creation_ts = Utc.with_ymd_and_hms(2019, 1, 15, 16, 1, 26).unwrap();
 					t
 				})
 				.collect();
@@ -520,7 +546,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let mut api_owner = Owner::new(wallet.clone());
+	/// let mut api_owner = Owner::new(wallet.clone(), None);
 	/// let update_from_node = true;
 	/// let minimum_confirmations=10;
 	///
@@ -606,7 +632,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let mut api_owner = Owner::new(wallet.clone());
+	/// let mut api_owner = Owner::new(wallet.clone(), None);
 	/// // Attempt to create a transaction using the 'default' account
 	/// let args = InitTxArgs {
 	/// 	src_acct_name: None,
@@ -642,25 +668,43 @@ where
 			let w = w_lock.lc_provider()?.wallet_inst()?;
 			owner::init_send_tx(&mut **w, keychain_mask, args, self.doctest_mode)?
 		};
+
 		// Helper functionality. If send arguments exist, attempt to send
 		match send_args {
 			Some(sa) => {
 				//TODO: in case of keybase, the response might take 60s and leave the service hanging
 				match sa.method.as_ref() {
-					"http" | "keybase" => {}
+					"http" | "keybase" | "epicbox" => {}
 					_ => {
 						error!("unsupported payment method: {}", sa.method);
-						return Err(ErrorKind::ClientCallback(
-							"unsupported payment method".to_owned(),
-						)
-						.into());
+						return Err(
+							Error::ClientCallback("unsupported payment method".to_owned()).into(),
+						);
 					}
 				};
+
 				let tor_config_lock = self.tor_config.lock();
-				let comm_adapter = create_sender(&sa.method, &sa.dest, tor_config_lock.clone())
-					.map_err(|e| ErrorKind::GenericError(format!("{}", e)))?;
-				slate = comm_adapter.send_tx(&slate)?;
-				self.tx_lock_outputs(keychain_mask, &slate, 0)?;
+				let epicbox_config_lock = self.epicbox_config.lock();
+
+				if sa.method == "epicbox" {
+					let epicbox_channel =
+						Box::new(EpicboxChannel::new(&sa.dest, epicbox_config_lock.clone()))
+							.map_err(|e| Error::GenericError(format!("{}", e)))?;
+					let wallet = self.wallet_inst.clone();
+					let km = match keychain_mask.as_ref() {
+						None => None,
+						Some(&m) => Some(m.to_owned()),
+					};
+					slate = epicbox_channel.send(wallet, km, &slate)?;
+					self.tx_lock_outputs(keychain_mask, &slate, 0, Some(sa.dest))?;
+					return Ok(slate);
+				} else {
+					let comm_adapter = create_sender(&sa.method, &sa.dest, tor_config_lock.clone())
+						.map_err(|e| Error::GenericError(format!("{}", e)))?;
+					slate = comm_adapter.send_tx(&slate)?;
+				}
+
+				self.tx_lock_outputs(keychain_mask, &slate, 0, Some(sa.dest))?;
 				let slate = match sa.finalize {
 					true => self.finalize_tx(keychain_mask, &slate)?,
 					false => slate,
@@ -697,7 +741,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let mut api_owner = Owner::new(wallet.clone());
+	/// let mut api_owner = Owner::new(wallet.clone(), None);
 	///
 	/// let args = IssueInvoiceTxArgs {
 	/// 	amount: 60_000_000_000,
@@ -752,7 +796,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let mut api_owner = Owner::new(wallet.clone());
+	/// let mut api_owner = Owner::new(wallet.clone(), None);
 	///
 	/// // . . .
 	/// // The slate has been recieved from the invoicer, somehow
@@ -805,6 +849,7 @@ where
 	/// * `slate` - The transaction [`Slate`](../epic_wallet_libwallet/slate/struct.Slate.html). All
 	/// * `participant_id` - The participant id, generally 0 for the party putting in funds, 1 for the
 	/// party receiving.
+	/// * `addr_to` - An optional receiver address
 	/// elements in the `input` vector of the `tx` field that are found in the wallet's currently
 	/// active account will be set to status `Locked`
 	///
@@ -817,7 +862,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let mut api_owner = Owner::new(wallet.clone());
+	/// let mut api_owner = Owner::new(wallet.clone(), None);
 	/// let args = InitTxArgs {
 	/// 	src_acct_name: None,
 	/// 	amount: 2_000_000_000,
@@ -837,7 +882,7 @@ where
 	///		// Send slate somehow
 	///		// ...
 	///		// Lock our outputs if we're happy the slate was (or is being) sent
-	///		api_owner.tx_lock_outputs(None, &slate, 0);
+	///		api_owner.tx_lock_outputs(None, &slate, 0, None);
 	/// }
 	/// ```
 
@@ -846,10 +891,11 @@ where
 		keychain_mask: Option<&SecretKey>,
 		slate: &Slate,
 		participant_id: usize,
+		addr_to: Option<String>,
 	) -> Result<(), Error> {
 		let mut w_lock = self.wallet_inst.lock();
 		let w = w_lock.lc_provider()?.wallet_inst()?;
-		owner::tx_lock_outputs(&mut **w, keychain_mask, slate, participant_id)
+		owner::tx_lock_outputs(&mut **w, keychain_mask, slate, participant_id, addr_to)
 	}
 
 	/// Finalizes a transaction, after all parties
@@ -881,7 +927,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let mut api_owner = Owner::new(wallet.clone());
+	/// let mut api_owner = Owner::new(wallet.clone(), None);
 	/// let args = InitTxArgs {
 	/// 	src_acct_name: None,
 	/// 	amount: 2_000_000_000,
@@ -941,7 +987,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let mut api_owner = Owner::new(wallet.clone());
+	/// let mut api_owner = Owner::new(wallet.clone(), None);
 	/// let args = InitTxArgs {
 	/// 	src_acct_name: None,
 	/// 	amount: 2_000_000_000,
@@ -983,6 +1029,7 @@ where
 			let _ = w.keychain(keychain_mask)?;
 			w.w2n_client().clone()
 		};
+
 		owner::post_tx(&client, tx, fluff)
 	}
 
@@ -1013,7 +1060,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let mut api_owner = Owner::new(wallet.clone());
+	/// let mut api_owner = Owner::new(wallet.clone(), None);
 	/// let args = InitTxArgs {
 	/// 	src_acct_name: None,
 	/// 	amount: 2_000_000_000,
@@ -1079,7 +1126,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let api_owner = Owner::new(wallet.clone());
+	/// let api_owner = Owner::new(wallet.clone(), None);
 	/// let update_from_node = true;
 	/// let tx_id = None;
 	/// let tx_slate_id = None;
@@ -1103,7 +1150,8 @@ where
 		let w = w_lock.lc_provider()?.wallet_inst()?;
 		// Test keychain mask, to keep API consistent
 		let _ = w.keychain(keychain_mask)?;
-		owner::get_stored_tx(&**w, tx_log_entry)
+
+		owner::get_stored_tx(&mut **w, tx_log_entry)
 	}
 
 	/// Verifies all messages in the slate match their public keys.
@@ -1129,7 +1177,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let mut api_owner = Owner::new(wallet.clone());
+	/// let mut api_owner = Owner::new(wallet.clone(), None);
 	/// let args = InitTxArgs {
 	/// 	src_acct_name: None,
 	/// 	amount: 2_000_000_000,
@@ -1209,7 +1257,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let mut api_owner = Owner::new(wallet.clone());
+	/// let mut api_owner = Owner::new(wallet.clone(), None);
 	/// let result = api_owner.scan(
 	/// 	None,
 	/// 	Some(20000),
@@ -1267,7 +1315,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let api_owner = Owner::new(wallet.clone());
+	/// let api_owner = Owner::new(wallet.clone(), None);
 	/// let result = api_owner.node_height(None);
 	///
 	/// if let Ok(node_height_result) = result {
@@ -1324,7 +1372,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let api_owner = Owner::new(wallet.clone());
+	/// let api_owner = Owner::new(wallet.clone(), None);
 	/// let result = api_owner.get_top_level_directory();
 	///
 	/// if let Ok(dir) = result {
@@ -1372,7 +1420,7 @@ where
 	/// # 	.ok_or("Failed to convert tmpdir path to string.".to_owned())
 	/// # 	.unwrap();
 	///
-	/// let api_owner = Owner::new(wallet.clone());
+	/// let api_owner = Owner::new(wallet.clone(), None);
 	/// let result = api_owner.set_top_level_directory(dir);
 	///
 	/// if let Ok(dir) = result {
@@ -1422,10 +1470,10 @@ where
 	/// # 	.ok_or("Failed to convert tmpdir path to string.".to_owned())
 	/// # 	.unwrap();
 	///
-	/// let api_owner = Owner::new(wallet.clone());
+	/// let api_owner = Owner::new(wallet.clone(), None);
 	/// let _ = api_owner.set_top_level_directory(dir);
 	///
-	/// let result = api_owner.create_config(&ChainTypes::Mainnet, None, None, None);
+	/// let result = api_owner.create_config(&ChainTypes::Mainnet, None, None, None, None);
 	///
 	/// if let Ok(_) = result {
 	///		//...
@@ -1438,6 +1486,7 @@ where
 		wallet_config: Option<WalletConfig>,
 		logging_config: Option<LoggingConfig>,
 		tor_config: Option<TorConfig>,
+		epicbox_config: Option<EpicboxConfig>,
 	) -> Result<(), Error> {
 		let mut w_lock = self.wallet_inst.lock();
 		let lc = w_lock.lc_provider()?;
@@ -1447,6 +1496,7 @@ where
 			wallet_config,
 			logging_config,
 			tor_config,
+			epicbox_config,
 		)
 	}
 
@@ -1491,11 +1541,11 @@ where
 	/// # 	.to_str()
 	/// # 	.ok_or("Failed to convert tmpdir path to string.".to_owned())
 	/// # 	.unwrap();
-	/// let api_owner = Owner::new(wallet.clone());
+	/// let api_owner = Owner::new(wallet.clone(), None);
 	/// let _ = api_owner.set_top_level_directory(dir);
 	///
 	/// // Create configuration
-	/// let result = api_owner.create_config(&ChainTypes::Mainnet, None, None, None);
+	/// let result = api_owner.create_config(&ChainTypes::Mainnet, None, None, None, None);
 	///
 	///	// create new wallet wirh random seed
 	///	let pw = ZeroingString::from("my_password");
@@ -1558,11 +1608,11 @@ where
 	/// # 	.to_str()
 	/// # 	.ok_or("Failed to convert tmpdir path to string.".to_owned())
 	/// # 	.unwrap();
-	/// let api_owner = Owner::new(wallet.clone());
+	/// let api_owner = Owner::new(wallet.clone(), None);
 	/// let _ = api_owner.set_top_level_directory(dir);
 	///
 	/// // Create configuration
-	/// let result = api_owner.create_config(&ChainTypes::Mainnet, None, None, None);
+	/// let result = api_owner.create_config(&ChainTypes::Mainnet, None, None, None, None);
 	///
 	///	// create new wallet wirh random seed
 	///	let pw = ZeroingString::from("my_password");
@@ -1586,13 +1636,17 @@ where
 		if self.doctest_mode {
 			let secp_inst = static_secp_instance();
 			let secp = secp_inst.lock();
-			return Ok(Some(SecretKey::from_slice(
-				&secp,
-				&from_hex(
-					"d096b3cb75986b3b13f80b8f5243a9edf0af4c74ac37578c5a12cfb5b59b1868".to_owned(),
+			return Ok(Some(
+				SecretKey::from_slice(
+					&secp,
+					&from_hex(
+						"d096b3cb75986b3b13f80b8f5243a9edf0af4c74ac37578c5a12cfb5b59b1868"
+							.to_owned(),
+					)
+					.unwrap(),
 				)
 				.unwrap(),
-			)?));
+			));
 		}
 		let mut w_lock = self.wallet_inst.lock();
 		let lc = w_lock.lc_provider()?;
@@ -1617,7 +1671,7 @@ where
 	/// use epic_core::global::ChainTypes;
 	///
 	///	// Set up as above
-	/// # let api_owner = Owner::new(wallet.clone());
+	/// # let api_owner = Owner::new(wallet.clone(), None);
 	///
 	/// let res = api_owner.close_wallet(None);
 	///
@@ -1653,7 +1707,7 @@ where
 	/// use epic_core::global::ChainTypes;
 	///
 	///	// Set up as above
-	/// # let api_owner = Owner::new(wallet.clone());
+	/// # let api_owner = Owner::new(wallet.clone(), None);
 	///
 	///	let pw = ZeroingString::from("my_password");
 	/// let res = api_owner.get_mnemonic(None, pw);
@@ -1698,7 +1752,7 @@ where
 	/// use epic_core::global::ChainTypes;
 	///
 	///	// Set up as above
-	/// # let api_owner = Owner::new(wallet.clone());
+	/// # let api_owner = Owner::new(wallet.clone(), None);
 	///
 	///	let old = ZeroingString::from("my_password");
 	///	let new = ZeroingString::from("new_password");
@@ -1741,7 +1795,7 @@ where
 	/// use epic_core::global::ChainTypes;
 	///
 	///	// Set up as above
-	/// # let api_owner = Owner::new(wallet.clone());
+	/// # let api_owner = Owner::new(wallet.clone(), None);
 	///
 	/// let res = api_owner.delete_wallet(None);
 	///
@@ -1797,7 +1851,7 @@ where
 	/// use std::time::Duration;
 	///
 	/// // Set up as above
-	/// # let api_owner = Owner::new(wallet.clone());
+	/// # let api_owner = Owner::new(wallet.clone(), None);
 	///
 	/// let res = api_owner.start_updater(None, Duration::from_secs(60));
 	///
@@ -1827,7 +1881,8 @@ where
 				if let Err(e) = u.run(frequency, keychain_mask, &tx_inner) {
 					error!("Wallet state updater failed with error: {:?}", e);
 				}
-			})?;
+			})
+			.unwrap();
 		Ok(())
 	}
 
@@ -1852,7 +1907,7 @@ where
 	/// use std::time::Duration;
 	///
 	/// // Set up as above
-	/// # let api_owner = Owner::new(wallet.clone());
+	/// # let api_owner = Owner::new(wallet.clone(), None);
 	///
 	/// let res = api_owner.start_updater(None, Duration::from_secs(60));
 	///
@@ -1894,7 +1949,7 @@ where
 	/// use std::time::Duration;
 	///
 	/// // Set up as above
-	/// # let api_owner = Owner::new(wallet.clone());
+	/// # let api_owner = Owner::new(wallet.clone(), None);
 	///
 	/// let res = api_owner.start_updater(None, Duration::from_secs(60));
 	///
@@ -1910,6 +1965,88 @@ where
 		let mut q = self.updater_messages.lock();
 		let index = q.len().saturating_sub(count);
 		Ok(q.split_off(index))
+	}
+
+	/// Retrieve the public "addresses" associated with the active account at the
+	/// given derivation path.
+	///
+	/// In this case, an "address" means a Dalek ed25519 public key corresponding to
+	/// a private key derived as follows:
+	///
+	/// e.g. The default parent account is at
+	///
+	/// `m/0/0`
+	///
+	/// With output blinding factors created as
+	///
+	/// `m/0/0/0`
+	/// `m/0/0/1` etc...
+	///
+	/// The corresponding public address derivation path would be at:
+	///
+	/// `m/0/1`
+	///
+	/// With addresses created as:
+	///
+	/// `m/0/1/0`
+	/// `m/0/1/1` etc...
+	///
+	/// Note that these addresses correspond to the public keys used in the addresses
+	/// of TOR hidden services configured by the wallet listener.
+	///
+	/// # Arguments
+	///
+	/// * `keychain_mask` - Wallet secret mask to XOR against the stored wallet seed before using, if
+	/// * `derivation_index` - The index along the derivation path to retrieve an address for
+	///
+	/// # Returns
+	/// * Ok with a DalekPublicKey representing the address
+	/// * or [`libwallet::Error`](../epic_wallet_libwallet/struct.Error.html) if an error is encountered.
+	///
+	/// # Example
+	/// Set up as in [`new`](struct.Owner.html#method.new) method above.
+	/// ```
+	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
+	///
+	/// use epic_core::global::ChainTypes;
+	///
+	/// use std::time::Duration;
+	///
+	/// // Set up as above
+	/// # let api_owner = Owner::new(wallet.clone(), None);
+	///
+	/// let res = api_owner.get_public_address(None, 0);
+	///
+	/// if let Ok(_) = res {
+	///   // ...
+	/// }
+	///
+	/// ```
+
+	pub fn get_public_address(
+		&self,
+		keychain_mask: Option<&SecretKey>,
+		derivation_index: u32,
+	) -> Result<EpicboxAddress, Error> {
+		let epicbox_config_lock = self.epicbox_config.lock();
+		let epicbox_config = match epicbox_config_lock.clone() {
+			None => EpicboxConfig::default(),
+			Some(epicbox_config) => epicbox_config,
+		};
+
+		{
+			let mut w_lock = self.wallet_inst.lock();
+			let w = w_lock.lc_provider()?.wallet_inst()?;
+			// Test keychain mask, to keep API consistent
+			let _ = w.keychain(keychain_mask)?;
+		}
+
+		owner::get_public_address(
+			self.wallet_inst.clone(),
+			keychain_mask,
+			epicbox_config,
+			derivation_index,
+		)
 	}
 
 	/// Retrieve the public proof "addresses" associated with the active account at the
@@ -1958,7 +2095,7 @@ where
 	/// use std::time::Duration;
 	///
 	/// // Set up as above
-	/// # let api_owner = Owner::new(wallet.clone());
+	/// # let api_owner = Owner::new(wallet.clone(), None);
 	///
 	/// let res = api_owner.get_public_proof_address(None, 0);
 	///
@@ -1973,6 +2110,12 @@ where
 		keychain_mask: Option<&SecretKey>,
 		derivation_index: u32,
 	) -> Result<DalekPublicKey, Error> {
+		{
+			let mut w_lock = self.wallet_inst.lock();
+			let w = w_lock.lc_provider()?.wallet_inst()?;
+			// Test keychain mask, to keep API consistent
+			let _ = w.keychain(keychain_mask)?;
+		}
 		owner::get_public_proof_address(self.wallet_inst.clone(), keychain_mask, derivation_index)
 	}
 
@@ -1998,7 +2141,7 @@ where
 	/// use std::time::Duration;
 	///
 	/// // Set up as above
-	/// # let api_owner = Owner::new(wallet.clone());
+	/// # let api_owner = Owner::new(wallet.clone(), None);
 	///
 	/// let res = api_owner.proof_address_from_onion_v3(
 	///  "2a6at2obto3uvkpkitqp4wxcg6u36qf534eucbskqciturczzc5suyid"
@@ -2046,7 +2189,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let api_owner = Owner::new(wallet.clone());
+	/// let api_owner = Owner::new(wallet.clone(), None);
 	/// let update_from_node = true;
 	/// let tx_id = None;
 	/// let tx_slate_id = Some(Uuid::parse_str("0436430c-2b02-624c-2032-570501212b00").unwrap());
@@ -2115,7 +2258,7 @@ where
 	/// ```
 	/// # epic_wallet_api::doctest_helper_setup_doc_env!(wallet, wallet_config);
 	///
-	/// let api_owner = Owner::new(wallet.clone());
+	/// let api_owner = Owner::new(wallet.clone(), None);
 	/// let update_from_node = true;
 	/// let tx_id = None;
 	/// let tx_slate_id = Some(Uuid::parse_str("0436430c-2b02-624c-2032-570501212b00").unwrap());
@@ -2175,7 +2318,8 @@ macro_rules! doctest_helper_setup_doc_env {
 		wallet_config.data_file_dir = dir.to_owned();
 		let pw = ZeroingString::from("");
 
-		let node_client = HTTPNodeClient::new(&wallet_config.check_node_api_http_addr, None);
+		let node_client =
+			HTTPNodeClient::new(&wallet_config.check_node_api_http_addr, None).unwrap();
 		let mut wallet = Box::new(
 			DefaultWalletImpl::<'static, HTTPNodeClient>::new(node_client.clone()).unwrap(),
 		)

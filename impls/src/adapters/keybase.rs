@@ -17,7 +17,8 @@
 use crate::adapters::{SlateReceiver, SlateSender};
 use crate::config::WalletConfig;
 use crate::libwallet::api_impl::foreign;
-use crate::libwallet::{Error, ErrorKind, NodeClient, Slate, WalletInst, WalletLCProvider};
+
+use crate::libwallet::{Error, NodeClient, Slate, WalletInst, WalletLCProvider};
 use crate::util::Mutex;
 use serde::Serialize;
 use serde_json::{from_str, json, to_string, Value};
@@ -47,13 +48,11 @@ impl KeybaseChannel {
 	pub fn new(channel: String) -> Result<KeybaseChannel, Error> {
 		// Limit only one recipient
 		if channel.matches(",").count() > 0 {
-			return Err(
-				ErrorKind::GenericError("Only one recipient is supported!".to_owned()).into(),
-			);
+			return Err(Error::GenericError("Only one recipient is supported!".to_owned()).into());
 		}
 
 		if !keybase_installed() {
-			return Err(ErrorKind::GenericError(
+			return Err(Error::GenericError(
 				"Keybase executable not found, make sure it is installed and in your PATH"
 					.to_owned(),
 			)
@@ -85,7 +84,7 @@ fn api_send(payload: &str) -> Result<Value, Error> {
 			String::from_utf8_lossy(&output.stdout),
 			String::from_utf8_lossy(&output.stderr)
 		);
-		Err(ErrorKind::GenericError("keybase api fail".to_owned()))?
+		Err(Error::GenericError("keybase api fail".to_owned()))?
 	} else {
 		let response: Value =
 			from_str(from_utf8(&output.stdout).expect("Bad output")).expect("Bad output");
@@ -109,7 +108,7 @@ fn whoami() -> Result<String, Error> {
 			String::from_utf8_lossy(&output.stdout),
 			String::from_utf8_lossy(&output.stderr)
 		);
-		Err(ErrorKind::GenericError("keybase api fail".to_owned()))?
+		Err(Error::GenericError("keybase api fail".to_owned()))?
 	} else {
 		let response: Value =
 			from_str(from_utf8(&output.stdout).expect("Bad output")).expect("Bad output");
@@ -123,7 +122,7 @@ fn whoami() -> Result<String, Error> {
 			Ok(s.to_string())
 		} else {
 			error!("keybase username query fail");
-			Err(ErrorKind::GenericError(
+			Err(Error::GenericError(
 				"keybase username query fail".to_owned(),
 			))?
 		}
@@ -161,7 +160,7 @@ fn read_from_channel(channel: &str, topic: &str) -> Result<Vec<String>, Error> {
 		}
 		Ok(unread)
 	} else {
-		Err(ErrorKind::GenericError("keybase api fail".to_owned()))?
+		Err(Error::GenericError("keybase api fail".to_owned()))?
 	}
 }
 
@@ -204,7 +203,7 @@ fn get_unread(topic: &str) -> Result<HashMap<String, String>, Error> {
 		}
 		Ok(unread)
 	} else {
-		Err(ErrorKind::GenericError("keybase api fail".to_owned()))?
+		Err(Error::GenericError("keybase api fail".to_owned()))?
 	}
 }
 
@@ -308,7 +307,7 @@ impl SlateSender for KeybaseChannel {
 		match send(&slate, &self.0, SLATE_NEW, TTL) {
 			true => (),
 			false => {
-				return Err(ErrorKind::ClientCallback(
+				return Err(Error::ClientCallback(
 					"Posting transaction slate".to_owned(),
 				))?;
 			}
@@ -318,7 +317,7 @@ impl SlateSender for KeybaseChannel {
 		match poll(TTL as u64, &self.0) {
 			Some(slate) => return Ok(slate),
 			None => {
-				return Err(ErrorKind::ClientCallback(
+				return Err(Error::ClientCallback(
 					"Receiving reply from recipient".to_owned(),
 				))?;
 			}
@@ -335,7 +334,7 @@ impl KeybaseAllChannels {
 	/// Create a KeybaseAllChannels, return error if keybase executable is not present
 	pub fn new() -> Result<KeybaseAllChannels, Error> {
 		if !keybase_installed() {
-			Err(ErrorKind::GenericError(
+			Err(Error::GenericError(
 				"Keybase executable not found, make sure it is installed and in your PATH"
 					.to_owned(),
 			)
@@ -411,6 +410,7 @@ impl SlateReceiver for KeybaseAllChannels {
 								&slate,
 								None,
 								None,
+								Some(channel.clone()),
 								false,
 							);
 							r

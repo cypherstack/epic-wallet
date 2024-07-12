@@ -74,13 +74,13 @@ fn ttl_cutoff_test_impl(test_dir: &'static str) -> Result<(), libwallet::Error> 
 	let _ =
 		test_framework::award_blocks_to_wallet(&chain, wallet1.clone(), mask1, bh as usize, false);
 
-	let amount = 60_000_000_000;
+	let amount = 1457720000;
 	let mut slate = Slate::blank(1);
 	wallet::controller::owner_single_use(wallet1.clone(), mask1, |sender_api, m| {
 		// note this will increment the block count as part of the transaction "Posting"
 		let args = InitTxArgs {
 			src_acct_name: None,
-			amount: amount,
+			amount,
 			minimum_confirmations: 2,
 			max_outputs: 500,
 			num_change_outputs: 1,
@@ -91,7 +91,7 @@ fn ttl_cutoff_test_impl(test_dir: &'static str) -> Result<(), libwallet::Error> 
 		let slate_i = sender_api.init_send_tx(m, args)?;
 
 		slate = client1.send_tx_slate_direct("wallet2", &slate_i)?;
-		sender_api.tx_lock_outputs(m, &slate, 0)?;
+		sender_api.tx_lock_outputs(m, &slate, 0, None)?;
 
 		let (_, txs) = sender_api.retrieve_txs(m, true, None, Some(slate.id))?;
 		let tx = txs[0].clone();
@@ -116,7 +116,7 @@ fn ttl_cutoff_test_impl(test_dir: &'static str) -> Result<(), libwallet::Error> 
 	wallet::controller::owner_single_use(wallet2.clone(), mask2, |sender_api, m| {
 		let (_, txs) = sender_api.retrieve_txs(m, true, None, Some(slate.id))?;
 		let tx = txs[0].clone();
-		let outputs = sender_api.retrieve_outputs(m, false, true, None)?.1;
+		let outputs = sender_api.retrieve_outputs(m, false, true, false, None)?.1;
 		assert_eq!(outputs.len(), 0);
 
 		assert_eq!(tx.ttl_cutoff_height, Some(12));
@@ -130,7 +130,7 @@ fn ttl_cutoff_test_impl(test_dir: &'static str) -> Result<(), libwallet::Error> 
 		// note this will increment the block count as part of the transaction "Posting"
 		let args = InitTxArgs {
 			src_acct_name: None,
-			amount: amount,
+			amount,
 			minimum_confirmations: 2,
 			max_outputs: 500,
 			num_change_outputs: 1,
@@ -139,7 +139,7 @@ fn ttl_cutoff_test_impl(test_dir: &'static str) -> Result<(), libwallet::Error> 
 			..Default::default()
 		};
 		let slate_i = sender_api.init_send_tx(m, args)?;
-		sender_api.tx_lock_outputs(m, &slate_i, 0)?;
+		sender_api.tx_lock_outputs(m, &slate_i, 0, None)?;
 		slate = slate_i;
 
 		let (_, txs) = sender_api.retrieve_txs(m, true, None, Some(slate.id))?;
@@ -176,7 +176,7 @@ fn ttl_cutoff() {
 	let test_dir = "test_output/ttl_cutoff";
 	setup(test_dir);
 	if let Err(e) = ttl_cutoff_test_impl(test_dir) {
-		panic!("Libwallet Error: {} - {}", e, e.backtrace().unwrap());
+		panic!("Libwallet Error: {}", e);
 	}
 	clean_output_dir(test_dir);
 }

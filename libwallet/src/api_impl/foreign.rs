@@ -21,7 +21,7 @@ use crate::epic_util::secp::key::SecretKey;
 use crate::internal::{tx, updater};
 use crate::slate_versions::SlateVersion;
 use crate::{
-	address, BlockFees, CbData, Error, ErrorKind, NodeClient, Slate, TxLogEntryType, VersionInfo,
+	address, BlockFees, CbData, Error, NodeClient, Slate, TxLogEntryType, VersionInfo,
 	WalletBackend,
 };
 
@@ -78,6 +78,7 @@ pub fn receive_tx<'a, T: ?Sized, C, K>(
 	slate: &Slate,
 	dest_acct_name: Option<&str>,
 	message: Option<String>,
+	addr_from: Option<String>,
 	use_test_rng: bool,
 ) -> Result<Slate, Error>
 where
@@ -107,7 +108,7 @@ where
 	)?;
 	for t in &tx {
 		if t.tx_type == TxLogEntryType::TxReceived {
-			return Err(ErrorKind::TransactionAlreadyReceived(ret_slate.id.to_string()).into());
+			return Err(Error::TransactionAlreadyReceived(ret_slate.id.to_string()).into());
 		}
 	}
 
@@ -130,6 +131,7 @@ where
 		use_test_rng,
 	)?;
 	tx::update_message(&mut *w, keychain_mask, &mut ret_slate)?;
+	tx::update_public_addr(&mut *w, keychain_mask, &mut ret_slate, addr_from)?;
 
 	let keychain = w.keychain(keychain_mask)?;
 	let excess = ret_slate.calc_excess(&keychain)?;

@@ -28,7 +28,7 @@ use toml;
 use crate::comments::insert_comments;
 use crate::core::global;
 use crate::types::{ConfigError, GlobalWalletConfig, GlobalWalletConfigMembers};
-use crate::types::{TorConfig, WalletConfig};
+use crate::types::{EpicboxConfig, TorConfig, WalletConfig};
 use crate::util::logger::LoggingConfig;
 
 /// Wallet configuration file name
@@ -59,6 +59,7 @@ fn get_epic_path(chain_type: &global::ChainTypes) -> Result<PathBuf, ConfigError
 
 fn check_config_current_dir(path: &str) -> Option<PathBuf> {
 	let p = env::current_dir();
+
 	let mut c = match p {
 		Ok(c) => c,
 		Err(_) => {
@@ -154,6 +155,7 @@ impl Default for GlobalWalletConfigMembers {
 		GlobalWalletConfigMembers {
 			logging: Some(LoggingConfig::default()),
 			tor: Some(TorConfig::default()),
+			epicbox: Some(EpicboxConfig::default()),
 			wallet: WalletConfig::default(),
 		}
 	}
@@ -173,7 +175,7 @@ impl GlobalWalletConfig {
 	/// apply defaults for each chain type
 	pub fn for_chain(chain_type: &global::ChainTypes) -> GlobalWalletConfig {
 		let mut defaults_conf = GlobalWalletConfig::default();
-		let mut defaults = &mut defaults_conf.members.as_mut().unwrap().wallet;
+		let defaults = &mut defaults_conf.members.as_mut().unwrap().wallet;
 		defaults.chain_type = Some(chain_type.clone());
 
 		match *chain_type {
@@ -222,14 +224,7 @@ impl GlobalWalletConfig {
 			}
 			Err(e) => {
 				return Err(ConfigError::ParseError(
-					String::from(
-						self.config_file_path
-							.as_mut()
-							.unwrap()
-							.to_str()
-							.unwrap()
-							.clone(),
-					),
+					String::from(self.config_file_path.as_mut().unwrap().to_str().unwrap()),
 					String::from(format!("{}", e)),
 				));
 			}

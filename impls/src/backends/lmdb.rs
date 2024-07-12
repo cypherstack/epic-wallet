@@ -18,11 +18,10 @@ use crate::core::core::Transaction;
 use crate::core::ser;
 use crate::keychain::{ChildNumber, ExtKeychain, Identifier, Keychain, SwitchCommitmentType};
 use crate::libwallet::{
-	AcctPathMapping, Context, Error, ErrorKind, NodeClient, OutputData, OutputStatus,
-	ScannedBlockInfo, TxLogEntry, WalletBackend, WalletInitStatus, WalletOutputBatch,
+	AcctPathMapping, Context, Error, NodeClient, OutputData, OutputStatus, ScannedBlockInfo,
+	TxLogEntry, WalletBackend, WalletInitStatus, WalletOutputBatch,
 };
 use crate::serialization::Serializable;
-use crate::store::Error as StoreError;
 use crate::store::{to_key, to_key_u64};
 use crate::util::secp::constants::SECRET_KEY_SIZE;
 use crate::util::secp::key::SecretKey;
@@ -236,11 +235,11 @@ where
 				hasher.update(&root_key.0[..]);
 				if *self.master_checksum != Some(hasher.finalize()) {
 					error!("Supplied keychain mask is invalid");
-					return Err(ErrorKind::InvalidKeychainMask.into());
+					return Err(Error::InvalidKeychainMask.into());
 				}
 				Ok(k_masked)
 			}
-			None => Err(ErrorKind::KeychainDoesntExist.into()),
+			None => Err(Error::KeychainDoesntExist.into()),
 		}
 	}
 
@@ -279,7 +278,7 @@ where
 			self.set_parent_key_id(a.path);
 			Ok(())
 		} else {
-			return Err(ErrorKind::UnknownAccountLabel(label.clone()).into());
+			return Err(Error::UnknownAccountLabel(label.clone()).into());
 		}
 	}
 
@@ -301,7 +300,7 @@ where
 		Ok(self
 			.db
 			.get_ser(&key)
-			.ok_or(StoreError::NotFoundErr(format!("Key Id: {}", id)))?
+			.ok_or(Error::NotFoundErr(format!("Key Id: {}", id)))?
 			.as_output_data()
 			.unwrap())
 	}
@@ -364,7 +363,7 @@ where
 		let mut ctx = self
 			.db
 			.get(&ctx_key)
-			.ok_or(StoreError::NotFoundErr(format!(
+			.ok_or(Error::NotFoundErr(format!(
 				"Slate id: {:x?}",
 				slate_id.to_vec()
 			)))?
@@ -637,7 +636,7 @@ where
 			.as_ref()
 			.unwrap()
 			.get_ser(&key)
-			.ok_or(StoreError::NotFoundErr(format!("Key Id: {}", id)))?
+			.ok_or(Error::NotFoundErr(format!("Key Id: {}", id)))?
 			.as_output_data()
 			.unwrap())
 	}
@@ -895,7 +894,7 @@ where
 			.as_ref()
 			.unwrap()
 			.delete(&ctx_key)
-			.map_err(|e| e.into())
+			.map_err(|e| Error::Backend(format!("{}", e)))
 	}
 
 	fn commit(&self) -> Result<(), Error> {

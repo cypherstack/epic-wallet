@@ -13,17 +13,22 @@
 // limitations under the License.
 
 mod emoji;
+mod epicbox;
 mod file;
 pub mod http;
 mod keybase;
 
 pub use self::emoji::EmojiSlate;
+pub use self::epicbox::{
+	Container, EpicboxBroker, EpicboxController, EpicboxListener, EpicboxPublisher,
+	EpicboxSubscriber, Listener, ListenerInterface,
+};
+pub use self::epicbox::{EpicboxChannel, EpicboxListenChannel};
 pub use self::file::PathToSlate;
 pub use self::http::{HttpSlateSender, SchemeNotHttp};
 pub use self::keybase::{KeybaseAllChannels, KeybaseChannel};
-
 use crate::config::{TorConfig, WalletConfig};
-use crate::libwallet::{Error, ErrorKind, NodeClient, Slate, WalletInst, WalletLCProvider};
+use crate::libwallet::{Error, NodeClient, Slate, WalletInst, WalletLCProvider};
 use crate::tor::config::complete_tor_address;
 
 use crate::keychain::Keychain;
@@ -73,7 +78,7 @@ pub fn create_sender(
 	tor_config: Option<TorConfig>,
 ) -> Result<Box<dyn SlateSender>, Error> {
 	let invalid = || {
-		ErrorKind::WalletComms(format!(
+		Error::WalletComms(format!(
 			"Invalid wallet comm type and destination. method: {}, dest: {}",
 			method, dest
 		))
@@ -93,11 +98,10 @@ pub fn create_sender(
 
 	Ok(match method {
 		"http" => Box::new(HttpSlateSender::new(&dest).map_err(|_| invalid())?),
+
 		"tor" => match tor_config {
 			None => {
-				return Err(
-					ErrorKind::WalletComms("Tor Configuration required".to_string()).into(),
-				);
+				return Err(Error::WalletComms("Tor Configuration required".to_string()).into());
 			}
 			Some(tc) => Box::new(
 				HttpSlateSender::with_socks_proxy(&dest, &tc.socks_proxy_addr, &tc.send_config_dir)
@@ -105,20 +109,21 @@ pub fn create_sender(
 			),
 		},
 		"keybase" => Box::new(KeybaseChannel::new(dest.to_owned())?),
+
 		"self" => {
-			return Err(ErrorKind::WalletComms(
-				"No sender implementation for \"self\".".to_string(),
-			)
-			.into());
+			return Err(
+				Error::WalletComms("No sender implementation for \"self\".".to_string()).into(),
+			);
 		}
 		"file" => {
-			return Err(ErrorKind::WalletComms(
+			return Err(Error::WalletComms(
 				"File based transactions must be performed asynchronously.".to_string(),
 			)
 			.into());
 		}
+
 		_ => {
-			return Err(ErrorKind::WalletComms(format!(
+			return Err(Error::WalletComms(format!(
 				"Wallet comm method \"{}\" does not exist.",
 				method
 			))

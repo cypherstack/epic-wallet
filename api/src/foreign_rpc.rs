@@ -16,9 +16,8 @@
 
 use crate::keychain::Keychain;
 use crate::libwallet::{
-	self, BlockFees, CbData, ErrorKind, InitTxArgs, IssueInvoiceTxArgs, NodeClient,
-	NodeVersionInfo, Slate, SlateVersion, VersionInfo, VersionedCoinbase, VersionedSlate,
-	WalletLCProvider,
+	self, BlockFees, CbData, Error, InitTxArgs, IssueInvoiceTxArgs, NodeClient, NodeVersionInfo,
+	Slate, SlateVersion, VersionInfo, VersionedCoinbase, VersionedSlate, WalletLCProvider,
 };
 use crate::{Foreign, ForeignCheckMiddlewareFn};
 use easy_jsonrpc_mw;
@@ -63,7 +62,7 @@ pub trait ForeignRpc {
 	# ,false, 0, false, false);
 	```
 	*/
-	fn check_version(&self) -> Result<VersionInfo, ErrorKind>;
+	fn check_version(&self) -> Result<VersionInfo, Error>;
 
 	/**
 	Networked Legacy (non-secure token) version of [Foreign::build_coinbase](struct.Foreign.html#method.build_coinbase).
@@ -114,10 +113,10 @@ pub trait ForeignRpc {
 	```
 	*/
 
-	fn build_coinbase(&self, block_fees: &BlockFees) -> Result<VersionedCoinbase, ErrorKind>;
+	fn build_coinbase(&self, block_fees: &BlockFees) -> Result<VersionedCoinbase, Error>;
 
 	/// Build a coinbase transaction
-	fn build_foundation(&self, block_fees: &BlockFees) -> Result<VersionedCoinbase, ErrorKind>;
+	fn build_foundation(&self, block_fees: &BlockFees) -> Result<VersionedCoinbase, Error>;
 
 	/**
 	Networked version of [Foreign::verify_slate_messages](struct.Foreign.html#method.verify_slate_messages).
@@ -199,7 +198,7 @@ pub trait ForeignRpc {
 	# ,false, 1 ,false, false);
 	```
 	*/
-	fn verify_slate_messages(&self, slate: VersionedSlate) -> Result<(), ErrorKind>;
+	fn verify_slate_messages(&self, slate: VersionedSlate) -> Result<(), Error>;
 
 	/**
 	Networked version of [Foreign::receive_tx](struct.Foreign.html#method.receive_tx).
@@ -215,14 +214,14 @@ pub trait ForeignRpc {
 		"id": 1,
 		"params": [
 			{
-			"version_info": {
-				"version": 2,
-				"orig_version": 2,
-				"block_header_version": 6
-			},
-			"num_participants": 2,
-			"id": "0436430c-2b02-624c-2032-570501212b00",
-			"tx": {
+			  "version_info": {
+					"version": 2,
+					"orig_version": 2,
+					"block_header_version": 6
+			  },
+			  "num_participants": 2,
+			  "id": "0436430c-2b02-624c-2032-570501212b00",
+			  "tx": {
 				"offset": "d202964900000000d302964900000000d402964900000000d502964900000000",
 				"body": {
 					"inputs": [
@@ -272,6 +271,7 @@ pub trait ForeignRpc {
 		},
 		null,
 		"Thanks, Yeastplume"
+
 		]
 	}
 	# "#
@@ -361,7 +361,7 @@ pub trait ForeignRpc {
 		slate: VersionedSlate,
 		dest_acct_name: Option<String>,
 		message: Option<String>,
-	) -> Result<VersionedSlate, ErrorKind>;
+	) -> Result<VersionedSlate, Error>;
 
 	/**
 
@@ -528,7 +528,7 @@ pub trait ForeignRpc {
 	# ,false, 5, false, true);
 	```
 	*/
-	fn finalize_invoice_tx(&self, slate: VersionedSlate) -> Result<VersionedSlate, ErrorKind>;
+	fn finalize_invoice_tx(&self, slate: VersionedSlate) -> Result<VersionedSlate, Error>;
 }
 
 impl<'a, L, C, K> ForeignRpc for Foreign<'a, L, C, K>
@@ -537,22 +537,22 @@ where
 	C: NodeClient + 'a,
 	K: Keychain + 'a,
 {
-	fn check_version(&self) -> Result<VersionInfo, ErrorKind> {
-		Foreign::check_version(self).map_err(|e| e.kind())
+	fn check_version(&self) -> Result<VersionInfo, Error> {
+		Foreign::check_version(self)
 	}
 
-	fn build_coinbase(&self, block_fees: &BlockFees) -> Result<VersionedCoinbase, ErrorKind> {
-		let cb: CbData = Foreign::build_coinbase(self, block_fees).map_err(|e| e.kind())?;
+	fn build_coinbase(&self, block_fees: &BlockFees) -> Result<VersionedCoinbase, Error> {
+		let cb: CbData = Foreign::build_coinbase(self, block_fees)?;
 		Ok(VersionedCoinbase::into_version(cb, SlateVersion::V3))
 	}
 
-	fn build_foundation(&self, block_fees: &BlockFees) -> Result<VersionedCoinbase, ErrorKind> {
-		let cb: CbData = Foreign::build_foundation(self, block_fees).map_err(|e| e.kind())?;
+	fn build_foundation(&self, block_fees: &BlockFees) -> Result<VersionedCoinbase, Error> {
+		let cb: CbData = Foreign::build_foundation(self, block_fees)?;
 		Ok(VersionedCoinbase::into_version(cb, SlateVersion::V3))
 	}
 
-	fn verify_slate_messages(&self, slate: VersionedSlate) -> Result<(), ErrorKind> {
-		Foreign::verify_slate_messages(self, &Slate::from(slate)).map_err(|e| e.kind())
+	fn verify_slate_messages(&self, slate: VersionedSlate) -> Result<(), Error> {
+		Foreign::verify_slate_messages(self, &Slate::from(slate))
 	}
 
 	fn receive_tx(
@@ -560,7 +560,7 @@ where
 		in_slate: VersionedSlate,
 		dest_acct_name: Option<String>,
 		message: Option<String>,
-	) -> Result<VersionedSlate, ErrorKind> {
+	) -> Result<VersionedSlate, Error> {
 		let version = in_slate.version();
 		let slate_from = Slate::from(in_slate);
 		let out_slate = Foreign::receive_tx(
@@ -568,15 +568,13 @@ where
 			&slate_from,
 			dest_acct_name.as_ref().map(String::as_str),
 			message,
-		)
-		.map_err(|e| e.kind())?;
+		)?;
 		Ok(VersionedSlate::into_version(out_slate, version))
 	}
 
-	fn finalize_invoice_tx(&self, in_slate: VersionedSlate) -> Result<VersionedSlate, ErrorKind> {
+	fn finalize_invoice_tx(&self, in_slate: VersionedSlate) -> Result<VersionedSlate, Error> {
 		let version = in_slate.version();
-		let out_slate =
-			Foreign::finalize_invoice_tx(self, &Slate::from(in_slate)).map_err(|e| e.kind())?;
+		let out_slate = Foreign::finalize_invoice_tx(self, &Slate::from(in_slate))?;
 		Ok(VersionedSlate::into_version(out_slate, version))
 	}
 }
@@ -587,7 +585,7 @@ fn test_check_middleware(
 	_slate: Option<&Slate>,
 ) -> Result<(), libwallet::Error> {
 	// TODO: Implement checks
-	// return Err(ErrorKind::GenericError("Test Rejection".into()))?
+	// return Err(Error::GenericError("Test Rejection".into()))?
 	Ok(())
 }
 

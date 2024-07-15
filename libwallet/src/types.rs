@@ -15,7 +15,7 @@
 //! Types and traits that should be provided by a wallet
 //! implementation
 
-use crate::config::{TorConfig, WalletConfig};
+use crate::config::{EpicboxConfig, TorConfig, WalletConfig};
 use crate::epic_core::core::hash::Hash;
 use crate::epic_core::core::{Output, Transaction, TxKernel};
 use crate::epic_core::libtx::{aggsig, secp_ser};
@@ -25,17 +25,17 @@ use crate::epic_util::logger::LoggingConfig;
 use crate::epic_util::secp::key::{PublicKey, SecretKey};
 use crate::epic_util::secp::{self, pedersen, Secp256k1};
 use crate::epic_util::ZeroingString;
-use crate::error::{Error, ErrorKind};
+use crate::error::Error;
 use crate::slate::ParticipantMessages;
 use crate::slate_versions::ser as dalek_ser;
 use chrono::prelude::*;
 use ed25519_dalek::PublicKey as DalekPublicKey;
 use ed25519_dalek::Signature as DalekSignature;
-use failure::ResultExt;
 use serde;
 use serde_json;
 use std::collections::HashMap;
 use std::fmt;
+
 use uuid::Uuid;
 
 /// Combined trait to allow dynamic wallet dispatch
@@ -71,6 +71,7 @@ where
 		wallet_config: Option<WalletConfig>,
 		logging_config: Option<LoggingConfig>,
 		tor_config: Option<TorConfig>,
+		epicbox_config: Option<EpicboxConfig>,
 	) -> Result<(), Error>;
 
 	///
@@ -346,7 +347,7 @@ pub trait NodeClient: Send + Sync + Clone {
 	fn set_node_api_secret(&mut self, node_api_secret: Option<String>);
 
 	/// Posts a transaction to a epic node
-	fn post_tx(&self, tx: &TxWrapper, fluff: bool) -> Result<(), Error>;
+	fn post_tx(&self, tx: &Transaction, fluff: bool) -> Result<(), Error>;
 
 	/// Returns the api version string and block header version as reported
 	/// by the node. Result can be cached for later use
@@ -589,12 +590,12 @@ impl Context {
 		};
 		Context {
 			parent_key_id: parent_key_id.clone(),
-			sec_key: sec_key,
+			sec_key,
 			sec_nonce,
 			input_ids: vec![],
 			output_ids: vec![],
 			fee: 0,
-			participant_id: participant_id,
+			participant_id,
 			payment_proof_derivation_index: None,
 		}
 	}
@@ -665,7 +666,7 @@ impl BlockIdentifier {
 	/// convert to hex string
 	pub fn from_hex(hex: &str) -> Result<BlockIdentifier, Error> {
 		let hash =
-			Hash::from_hex(hex).context(ErrorKind::GenericError("Invalid hex".to_owned()))?;
+			Hash::from_hex(hex).map_err(|_e| Error::GenericError("Invalid hex".to_owned()))?;
 		Ok(BlockIdentifier(hash))
 	}
 }
@@ -818,6 +819,8 @@ pub struct TxLogEntry {
 	/// Additional info needed to stored payment proof
 	#[serde(default)]
 	pub payment_proof: Option<StoredProofInfo>,
+	/// From or To Address tx was send/received
+	pub public_addr: Option<String>,
 }
 
 impl ser::Writeable for TxLogEntry {
@@ -837,9 +840,9 @@ impl TxLogEntry {
 	/// Return a new blank with TS initialised with next entry
 	pub fn new(parent_key_id: Identifier, t: TxLogEntryType, id: u32) -> Self {
 		TxLogEntry {
-			parent_key_id: parent_key_id,
+			parent_key_id,
 			tx_type: t,
-			id: id,
+			id,
 			tx_slate_id: None,
 			creation_ts: Utc::now(),
 			confirmation_ts: None,
@@ -855,6 +858,7 @@ impl TxLogEntry {
 			kernel_excess: None,
 			kernel_lookup_min_height: None,
 			payment_proof: None,
+			public_addr: None,
 		}
 	}
 

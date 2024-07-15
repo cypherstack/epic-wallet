@@ -15,24 +15,31 @@
 //! Epic wallet command-line function implementations
 
 use crate::api::TLSConfig;
-use crate::config::{TorConfig, WalletConfig, WALLET_CONFIG_FILE_NAME};
+use crate::config::{EpicboxConfig, TorConfig, WalletConfig, WALLET_CONFIG_FILE_NAME};
 use crate::core::{core, global};
-use crate::error::{Error, ErrorKind};
-use crate::impls::{create_sender, KeybaseAllChannels, SlateGetter as _, SlateReceiver as _};
+use crate::error::Error;
+
+use crate::impls::{
+	create_sender, EpicboxChannel, EpicboxListenChannel, KeybaseAllChannels, SlateGetter as _,
+	SlateReceiver as _,
+};
 use crate::impls::{EmojiSlate, PathToSlate, SlatePutter};
 use crate::keychain;
 use crate::libwallet::{
-	self, address, InitTxArgs, IssueInvoiceTxArgs, NodeClient, PaymentProof, WalletInst,
-	WalletLCProvider,
+	address, Error as LibwalletError, InitTxArgs, IssueInvoiceTxArgs, NodeClient, PaymentProof,
+	WalletInst, WalletLCProvider,
 };
+
 use crate::util::secp::key::SecretKey;
 use crate::util::{to_hex, Mutex, ZeroingString};
 use crate::{controller, display};
+
 use serde_json as json;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use std::thread;
+
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -70,7 +77,7 @@ pub fn init<L, C, K>(
 	wallet: Arc<Mutex<Box<dyn WalletInst<'static, L, C, K>>>>,
 	g_args: &GlobalArgs,
 	args: InitArgs,
-) -> Result<(), Error>
+) -> Result<(), epic_wallet_libwallet::Error>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -81,6 +88,7 @@ where
 	p.create_config(
 		&g_args.chain_type,
 		WALLET_CONFIG_FILE_NAME,
+		None,
 		None,
 		None,
 		None,
@@ -106,7 +114,7 @@ pub struct RecoverArgs {
 pub fn recover<L, C, K>(
 	wallet: Arc<Mutex<Box<dyn WalletInst<'static, L, C, K>>>>,
 	args: RecoverArgs,
-) -> Result<(), Error>
+) -> Result<(), epic_wallet_libwallet::Error>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -129,9 +137,10 @@ pub fn listen<L, C, K>(
 	keychain_mask: Arc<Mutex<Option<SecretKey>>>,
 	config: &WalletConfig,
 	tor_config: &TorConfig,
+	epicbox_config: &EpicboxConfig,
 	args: &ListenArgs,
 	g_args: &GlobalArgs,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -145,20 +154,47 @@ where
 			g_args.tls_conf.clone(),
 			tor_config.use_tor_listener,
 		),
-		"keybase" => {
-			KeybaseAllChannels::new()?.listen(wallet.clone(), keychain_mask, config.clone())
+		"keybase" => KeybaseAllChannels::new().unwrap().listen(
+			wallet.clone(),
+			keychain_mask.clone(),
+			config.clone(),
+		),
+		"epicbox" => {
+			let mut reconnections = 0;
+			loop {
+				let listener = EpicboxListenChannel::new()?.listen(
+					wallet.clone(),
+					keychain_mask.clone(),
+					epicbox_config.clone(),
+					&mut reconnections,
+				);
+				info!("Reconnect to epicbox");
+				match listener {
+					Err(e) => {
+						error!("Error in listener loop ({})", e);
+					}
+					Ok(_) => (),
+				}
+				if reconnections >= 5 {
+					break;
+				}
+				let duration = std::time::Duration::from_secs(20);
+				std::thread::sleep(duration);
+			}
+			return Err(LibwalletError::EpicboxReconnectLimit);
 		}
 		method => {
-			return Err(ErrorKind::ArgumentError(format!(
-				"No listener for method \"{}\".",
+			return Err(LibwalletError::ArgumentError(format!(
+				"No listener for method {}",
 				method
-			))
-			.into());
+			)));
 		}
 	};
 
+	debug!("{}", args.method.clone());
+
 	if let Err(e) = res {
-		return Err(ErrorKind::LibWallet(e.kind(), e.cause_string()).into());
+		return Err(LibwalletError::LibWallet(format!("{}", e)));
 	}
 	Ok(())
 }
@@ -168,8 +204,9 @@ pub fn owner_api<L, C, K>(
 	keychain_mask: Option<SecretKey>,
 	config: &WalletConfig,
 	tor_config: &TorConfig,
+	epicbox_config: &EpicboxConfig,
 	g_args: &GlobalArgs,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + Send + Sync + 'static,
 	C: NodeClient + 'static,
@@ -186,9 +223,10 @@ where
 		g_args.tls_conf.clone(),
 		config.owner_api_include_foreign.clone(),
 		Some(tor_config.clone()),
+		Some(epicbox_config.clone()),
 	);
 	if let Err(e) = res {
-		return Err(ErrorKind::LibWallet(e.kind(), e.cause_string()).into());
+		return Err(LibwalletError::LibWallet(format!("{}", e)));
 	}
 	Ok(())
 }
@@ -202,7 +240,7 @@ pub fn account<L, C, K>(
 	wallet: Arc<Mutex<Box<dyn WalletInst<'static, L, C, K>>>>,
 	keychain_mask: Option<&SecretKey>,
 	args: AccountArgs,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -218,7 +256,7 @@ where
 		});
 		if let Err(e) = res {
 			error!("Error listing accounts: {}", e);
-			return Err(ErrorKind::LibWallet(e.kind(), e.cause_string()).into());
+			return Err(LibwalletError::LibWallet(format!("{}", e)));
 		}
 	} else {
 		let label = args.create.unwrap();
@@ -231,7 +269,7 @@ where
 		if let Err(e) = res {
 			thread::sleep(Duration::from_millis(200));
 			error!("Error creating account '{}': {}", label, e);
-			return Err(ErrorKind::LibWallet(e.kind(), e.cause_string()).into());
+			return Err(LibwalletError::LibWallet(format!("{}", e)));
 		}
 	}
 	Ok(())
@@ -258,9 +296,10 @@ pub fn send<L, C, K>(
 	wallet: Arc<Mutex<Box<dyn WalletInst<'static, L, C, K>>>>,
 	keychain_mask: Option<&SecretKey>,
 	tor_config: Option<TorConfig>,
+	epicbox_config: Option<EpicboxConfig>,
 	args: SendArgs,
 	dark_scheme: bool,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -325,16 +364,16 @@ where
 			match args.method.as_str() {
 				"emoji" => {
 					println!("{}", EmojiSlate().encode(&slate));
-					api.tx_lock_outputs(m, &slate, 0)?;
+					api.tx_lock_outputs(m, &slate, 0, Some(args.dest))?;
 					return Ok(());
 				}
 				"file" => {
 					PathToSlate((&args.dest).into()).put_tx(&slate)?;
-					api.tx_lock_outputs(m, &slate, 0)?;
+					api.tx_lock_outputs(m, &slate, 0, Some(args.dest))?;
 					return Ok(());
 				}
 				"self" => {
-					api.tx_lock_outputs(m, &slate, 0)?;
+					api.tx_lock_outputs(m, &slate, 0, Some(args.dest.clone()))?;
 					let km = match keychain_mask.as_ref() {
 						None => None,
 						Some(&m) => Some(m.to_owned()),
@@ -344,10 +383,25 @@ where
 						Ok(())
 					})?;
 				}
+				"epicbox" => {
+					let epicbox_channel = Box::new(EpicboxChannel::new(&args.dest, epicbox_config))
+						.expect("error starting epicbox");
+
+					let km = match keychain_mask.as_ref() {
+						None => None,
+						Some(&m) => Some(m.to_owned()),
+					};
+					slate = epicbox_channel.send(wallet, km, &slate)?;
+
+					api.tx_lock_outputs(m, &slate, 0, Some(args.dest))?;
+
+					return Ok(());
+				}
 				method => {
 					let sender = create_sender(method, &args.dest, tor_config)?;
+
 					slate = sender.send_tx(&slate)?;
-					api.tx_lock_outputs(m, &slate, 0)?;
+					api.tx_lock_outputs(m, &slate, 0, Some(args.dest))?;
 				}
 			}
 
@@ -385,7 +439,7 @@ pub fn receive<L, C, K>(
 	keychain_mask: Option<&SecretKey>,
 	g_args: &GlobalArgs,
 	args: ReceiveArgs,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K>,
 	C: NodeClient + 'static,
@@ -438,7 +492,7 @@ pub fn finalize<L, C, K>(
 	wallet: Arc<Mutex<Box<dyn WalletInst<'static, L, C, K>>>>,
 	keychain_mask: Option<&SecretKey>,
 	args: FinalizeArgs,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -462,9 +516,9 @@ where
 		match part_data {
 			None => {
 				error!("Expected slate participant data missing");
-				return Err(ErrorKind::ArgumentError(
-					"Expected Slate participant data missing".into(),
-				))?;
+				return Err(Error::ArgumentError(format!(
+					"Expected Slate participant data missing"
+				)))?;
 			}
 			Some(p) => !p.is_complete(),
 		}
@@ -531,7 +585,7 @@ pub fn issue_invoice_tx<L, C, K>(
 	wallet: Arc<Mutex<Box<dyn WalletInst<'static, L, C, K>>>>,
 	keychain_mask: Option<&SecretKey>,
 	args: IssueInvoiceArgs,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -565,7 +619,7 @@ pub fn process_invoice<L, C, K>(
 	tor_config: Option<TorConfig>,
 	args: ProcessInvoiceArgs,
 	dark_scheme: bool,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -630,10 +684,10 @@ where
 				"file" => {
 					let slate_putter = PathToSlate((&args.dest).into());
 					slate_putter.put_tx(&slate)?;
-					api.tx_lock_outputs(m, &slate, 0)?;
+					api.tx_lock_outputs(m, &slate, 0, Some(args.dest))?;
 				}
 				"self" => {
-					api.tx_lock_outputs(m, &slate, 0)?;
+					api.tx_lock_outputs(m, &slate, 0, Some(args.dest))?;
 					let km = match keychain_mask.as_ref() {
 						None => None,
 						Some(&m) => Some(m.to_owned()),
@@ -646,7 +700,7 @@ where
 				method => {
 					let sender = create_sender(method, &args.dest, tor_config)?;
 					slate = sender.send_tx(&slate)?;
-					api.tx_lock_outputs(m, &slate, 0)?;
+					api.tx_lock_outputs(m, &slate, 0, Some(args.dest))?;
 				}
 			}
 		}
@@ -665,7 +719,7 @@ pub fn info<L, C, K>(
 	g_args: &GlobalArgs,
 	args: InfoArgs,
 	dark_scheme: bool,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -691,7 +745,7 @@ pub fn outputs<L, C, K>(
 	g_args: &GlobalArgs,
 	args: OutputsArgs,
 	dark_scheme: bool,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -719,7 +773,7 @@ pub fn txs<L, C, K>(
 	g_args: &GlobalArgs,
 	args: TxsArgs,
 	dark_scheme: bool,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -778,7 +832,7 @@ pub fn post<L, C, K>(
 	wallet: Arc<Mutex<Box<dyn WalletInst<'static, L, C, K>>>>,
 	keychain_mask: Option<&SecretKey>,
 	args: PostArgs,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -805,7 +859,7 @@ pub fn repost<L, C, K>(
 	wallet: Arc<Mutex<Box<dyn WalletInst<'static, L, C, K>>>>,
 	keychain_mask: Option<&SecretKey>,
 	args: RepostArgs,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -857,7 +911,7 @@ pub fn cancel<L, C, K>(
 	wallet: Arc<Mutex<Box<dyn WalletInst<'static, L, C, K>>>>,
 	keychain_mask: Option<&SecretKey>,
 	args: CancelArgs,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -889,7 +943,7 @@ pub fn scan<L, C, K>(
 	wallet: Arc<Mutex<Box<dyn WalletInst<'static, L, C, K>>>>,
 	keychain_mask: Option<&SecretKey>,
 	args: CheckArgs,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -905,7 +959,7 @@ where
 			}
 			Err(e) => {
 				error!("Wallet check failed: {}", e);
-				error!("Backtrace: {}", e.backtrace().unwrap());
+				error!("Backtrace: {}", e);
 				Err(e)
 			}
 		}
@@ -918,7 +972,8 @@ pub fn address<L, C, K>(
 	wallet: Arc<Mutex<Box<dyn WalletInst<'static, L, C, K>>>>,
 	g_args: &GlobalArgs,
 	keychain_mask: Option<&SecretKey>,
-) -> Result<(), Error>
+	epicbox_config: EpicboxConfig,
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -928,8 +983,18 @@ where
 		// Just address at derivation index 0 for now
 		let pub_key = api.get_public_proof_address(m, 0)?;
 		let result = address::onion_v3_from_pubkey(&pub_key);
+		let address = api.get_public_address(m, 0)?;
+
 		match result {
 			Ok(a) => {
+				println!();
+				println!("Epicbox address for account - {}", g_args.account);
+				println!("-------------------------------------");
+				println!(
+					"{}@{}",
+					address.public_key,
+					epicbox_config.epicbox_domain.unwrap()
+				);
 				println!();
 				println!("Public Proof Address for account - {}", g_args.account);
 				println!("-------------------------------------");
@@ -943,7 +1008,7 @@ where
 			}
 			Err(e) => {
 				error!("Address retrieval failed: {}", e);
-				error!("Backtrace: {}", e.backtrace().unwrap());
+				error!("Backtrace: {}", e);
 				Err(e)
 			}
 		}
@@ -962,7 +1027,7 @@ pub fn proof_export<L, C, K>(
 	wallet: Arc<Mutex<Box<dyn WalletInst<'static, L, C, K>>>>,
 	keychain_mask: Option<&SecretKey>,
 	args: ProofExportArgs,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -997,7 +1062,7 @@ pub fn proof_verify<L, C, K>(
 	wallet: Arc<Mutex<Box<dyn WalletInst<'static, L, C, K>>>>,
 	keychain_mask: Option<&SecretKey>,
 	args: ProofVerifyArgs,
-) -> Result<(), Error>
+) -> Result<(), LibwalletError>
 where
 	L: WalletLCProvider<'static, C, K> + 'static,
 	C: NodeClient + 'static,
@@ -1012,7 +1077,7 @@ where
 					"Unable to open payment proof file at {}: {}",
 					args.input_file, e
 				);
-				return Err(libwallet::ErrorKind::PaymentProofParsing(msg).into());
+				return Err(LibwalletError::PaymentProofParsing(msg));
 			}
 		};
 		let mut proof = String::new();
@@ -1023,7 +1088,7 @@ where
 			Err(e) => {
 				let msg = format!("{}", e);
 				error!("Unable to parse payment proof file: {}", e);
-				return Err(libwallet::ErrorKind::PaymentProofParsing(msg).into());
+				return Err(LibwalletError::PaymentProofParsing(msg));
 			}
 		};
 		let result = api.verify_payment_proof(m, &proof);

@@ -1,3 +1,40 @@
+epic-wallet (3.6.0) focal; urgency=high
+
+  [ Epic Team ]
+  * Epicbox Protocol v3.0.0 upgrade
+  * Change default epicbox domain to epicbox.epiccash.com
+  * Adds ability to display to/from address in wallet transfers
+
+ -- Epic Team <info@epiccash.com>  Wed, 27 Feb 2024 12:00:00 +0000
+
+epic-wallet (3.5.2) focal; urgency=medium
+
+  [ Epic Team ]
+  * Epicbox stability improvements
+  * Changes to subscribe interval for epicbox connections
+  * Increase minimum node compat to 3.5.0
+
+ -- Epic Team <info@epiccash.com>  Wed, 22 Feb 2024 12:00:00 +0000
+
+epic-wallet (3.5.0) focal; urgency=high
+
+  [ Epic Team ]
+  * Update dependencies
+  * Fix OwnerV2 api failing to retrieve epicbox config
+  * Fix domain/port discernment for epicbox addresses
+
+ -- Epic Team <admin@epic.tech>  Wed, 23 Nov 2023 12:00:00 +0000
+
+epic-wallet (3.4.0) focal; urgency=high
+
+  [ Epic Team ]
+  * New Transaction method "epicbox" with public epic address
+  * Update ring to 0.16.x
+  * Fix bug, where owner_api threads are not closed
+  * Epicbox Protocol V2
+
+ -- Epic Team <admin@epic.tech>  Wed, 14 Jun 2023 12:00:00 +0000
+
 epic-wallet (3.3.2) bionic; urgency=medium
 
   [ Epic Team ]
@@ -8,6 +45,8 @@ epic-wallet (3.3.2) bionic; urgency=medium
   * Fix for Rust warnings
   * New readme
   * LMDB to SQLite interface
+
+ -- Epic Team <admin@epic.tech>  Mon, 23 Jan 2023 12:00:00 +0000
 
 epic-wallet (3.2.2~alpha-1) UNRELEASED; urgency=medium
 

@@ -91,7 +91,7 @@ fn updater_thread_test_impl(test_dir: &'static str) -> Result<(), libwallet::Err
 	let _ =
 		test_framework::award_blocks_to_wallet(&chain, wallet1.clone(), mask1, bh as usize, false);
 
-	let owner_api = api::Owner::new(wallet1);
+	let owner_api = api::Owner::new(wallet1, None);
 	owner_api.start_updater(mask1, Duration::from_secs(5))?;
 
 	// let updater thread run a bit
@@ -110,7 +110,7 @@ fn updater_thread() {
 	let test_dir = "test_output/updater_thread";
 	setup(test_dir);
 	if let Err(e) = updater_thread_test_impl(test_dir) {
-		panic!("Libwallet Error: {} - {}", e, e.backtrace().unwrap());
+		panic!("Libwallet Error: {}", e);
 	}
 	clean_output_dir(test_dir);
 }

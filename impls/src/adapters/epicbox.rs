@@ -847,7 +847,7 @@ impl EpicboxBroker {
 
 		self.inner
 			.lock()
-			.send(Message::Text(serde_json::to_string(&request).unwrap()))
+			.send(Message::Text(serde_json::to_string(&request).unwrap().into()))
 			.unwrap();
 
 		debug!("Slate sent successfully!");

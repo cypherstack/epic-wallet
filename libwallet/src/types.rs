@@ -15,7 +15,7 @@
 //! Types and traits that should be provided by a wallet
 //! implementation
 
-use crate::config::{EpicboxConfig, TorConfig, WalletConfig};
+use crate::config::{TorConfig, WalletConfig};
 use crate::epic_core::core::hash::Hash;
 use crate::epic_core::core::{Output, Transaction, TxKernel};
 use crate::epic_core::libtx::{aggsig, secp_ser};
@@ -25,17 +25,17 @@ use crate::epic_util::logger::LoggingConfig;
 use crate::epic_util::secp::key::{PublicKey, SecretKey};
 use crate::epic_util::secp::{self, pedersen, Secp256k1};
 use crate::epic_util::ZeroingString;
-use crate::error::Error;
+use crate::error::{Error, ErrorKind};
 use crate::slate::ParticipantMessages;
 use crate::slate_versions::ser as dalek_ser;
 use chrono::prelude::*;
 use ed25519_dalek::PublicKey as DalekPublicKey;
 use ed25519_dalek::Signature as DalekSignature;
+use failure::ResultExt;
 use serde;
 use serde_json;
 use std::collections::HashMap;
 use std::fmt;
-
 use uuid::Uuid;
 
 /// Combined trait to allow dynamic wallet dispatch
@@ -71,7 +71,6 @@ where
 		wallet_config: Option<WalletConfig>,
 		logging_config: Option<LoggingConfig>,
 		tor_config: Option<TorConfig>,
-		epicbox_config: Option<EpicboxConfig>,
 	) -> Result<(), Error>;
 
 	///
@@ -183,9 +182,6 @@ where
 	/// Iterate over all output data stored by the backend
 	fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = OutputData> + 'a>;
 
-	/// Iterate over all outputs available in the output history table
-	fn history_iter<'a>(&'a self) -> Box<dyn Iterator<Item = OutputData> + 'a>;
-
 	/// Get output data by id
 	fn get(&self, id: &Identifier, mmr_index: &Option<u64>) -> Result<OutputData, Error>;
 
@@ -255,25 +251,14 @@ where
 	/// Add or update data about an output to the backend
 	fn save(&mut self, out: OutputData) -> Result<(), Error>;
 
-	/// Add data about an output in the output history table
-	fn save_output_history(&mut self, out: OutputData) -> Result<(), Error>;
-
 	/// Gets output data by id
 	fn get(&self, id: &Identifier, mmr_index: &Option<u64>) -> Result<OutputData, Error>;
 
 	/// Iterate over all output data stored by the backend
 	fn iter(&self) -> Box<dyn Iterator<Item = OutputData>>;
 
-	/// Iterate over all outputs available in the output history table
-	fn history_iter(&self) -> Box<dyn Iterator<Item = OutputData>>;
-
 	/// Delete data about an output from the backend
-	fn delete(
-		&mut self,
-		id: &Identifier,
-		mmr_index: &Option<u64>,
-		tx_id: &Option<u32>,
-	) -> Result<(), Error>;
+	fn delete(&mut self, id: &Identifier, mmr_index: &Option<u64>) -> Result<(), Error>;
 
 	/// Save last stored child index of a given parent
 	fn save_child_index(&mut self, parent_key_id: &Identifier, child_n: u32) -> Result<(), Error>;
@@ -290,9 +275,6 @@ where
 
 	/// Save flag indicating whether wallet needs a full UTXO scan
 	fn save_init_status<'a>(&mut self, value: WalletInitStatus) -> Result<(), Error>;
-
-	/// get next output history table id
-	fn next_output_history_id(&mut self) -> Result<u32, Error>;
 
 	/// get next tx log entry for the parent
 	fn next_tx_log_id(&mut self, parent_key_id: &Identifier) -> Result<u32, Error>;
@@ -347,7 +329,7 @@ pub trait NodeClient: Send + Sync + Clone {
 	fn set_node_api_secret(&mut self, node_api_secret: Option<String>);
 
 	/// Posts a transaction to a epic node
-	fn post_tx(&self, tx: &Transaction, fluff: bool) -> Result<(), Error>;
+	fn post_tx(&self, tx: &TxWrapper, fluff: bool) -> Result<(), Error>;
 
 	/// Returns the api version string and block header version as reported
 	/// by the node. Result can be cached for later use
@@ -535,8 +517,6 @@ pub enum OutputStatus {
 	Locked,
 	/// Spent
 	Spent,
-	/// Deleted
-	Deleted,
 }
 
 impl fmt::Display for OutputStatus {
@@ -546,7 +526,6 @@ impl fmt::Display for OutputStatus {
 			OutputStatus::Unspent => write!(f, "Unspent"),
 			OutputStatus::Locked => write!(f, "Locked"),
 			OutputStatus::Spent => write!(f, "Spent"),
-			OutputStatus::Deleted => write!(f, "Deleted"),
 		}
 	}
 }
@@ -590,12 +569,12 @@ impl Context {
 		};
 		Context {
 			parent_key_id: parent_key_id.clone(),
-			sec_key,
+			sec_key: sec_key,
 			sec_nonce,
 			input_ids: vec![],
 			output_ids: vec![],
 			fee: 0,
-			participant_id,
+			participant_id: participant_id,
 			payment_proof_derivation_index: None,
 		}
 	}
@@ -666,7 +645,7 @@ impl BlockIdentifier {
 	/// convert to hex string
 	pub fn from_hex(hex: &str) -> Result<BlockIdentifier, Error> {
 		let hash =
-			Hash::from_hex(hex).map_err(|_e| Error::GenericError("Invalid hex".to_owned()))?;
+			Hash::from_hex(hex).context(ErrorKind::GenericError("Invalid hex".to_owned()))?;
 		Ok(BlockIdentifier(hash))
 	}
 }
@@ -819,8 +798,6 @@ pub struct TxLogEntry {
 	/// Additional info needed to stored payment proof
 	#[serde(default)]
 	pub payment_proof: Option<StoredProofInfo>,
-	/// From or To Address tx was send/received
-	pub public_addr: Option<String>,
 }
 
 impl ser::Writeable for TxLogEntry {
@@ -840,9 +817,9 @@ impl TxLogEntry {
 	/// Return a new blank with TS initialised with next entry
 	pub fn new(parent_key_id: Identifier, t: TxLogEntryType, id: u32) -> Self {
 		TxLogEntry {
-			parent_key_id,
+			parent_key_id: parent_key_id,
 			tx_type: t,
-			id,
+			id: id,
 			tx_slate_id: None,
 			creation_ts: Utc::now(),
 			confirmation_ts: None,
@@ -858,7 +835,6 @@ impl TxLogEntry {
 			kernel_excess: None,
 			kernel_lookup_min_height: None,
 			payment_proof: None,
-			public_addr: None,
 		}
 	}
 

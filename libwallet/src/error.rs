@@ -15,20 +15,28 @@
 //! Error types for libwallet
 
 use crate::epic_core::core::{committed, transaction};
-
+use crate::epic_core::libtx;
 use crate::epic_keychain;
+use crate::epic_store;
 use crate::epic_util::secp;
+use failure::{Backtrace, Context, Fail};
+use std::env;
+use std::fmt::{self, Display};
 use std::io;
+
 /// Error definition
+#[derive(Debug, Fail)]
+pub struct Error {
+	inner: Context<ErrorKind>,
+}
 
 /// Wallet errors, mostly wrappers around underlying crypto or I/O errors.
-#[derive(Clone, Eq, PartialEq, Debug, thiserror::Error, Serialize, Deserialize)]
-pub enum Error {
+#[derive(Clone, Eq, PartialEq, Debug, Fail, Serialize, Deserialize)]
+pub enum ErrorKind {
 	/// Not enough funds
-	#[error(
-		"Not enough funds. Required: {}, Available: {}",
-		needed_disp,
-		available_disp
+	#[fail(
+		display = "Not enough funds. Required: {}, Available: {}",
+		needed_disp, available_disp
 	)]
 	NotEnoughFunds {
 		/// available funds
@@ -42,293 +50,326 @@ pub enum Error {
 	},
 
 	/// Fee error
-	#[error("Fee Error: {}", _0)]
+	#[fail(display = "Fee Error: {}", _0)]
 	Fee(String),
 
 	/// LibTX Error
-	#[error("LibTx Error: {}", _0)]
-	LibTX(String),
+	#[fail(display = "LibTx Error")]
+	LibTX(libtx::ErrorKind),
 
 	/// Keychain error
-	#[error("Keychain error")]
+	#[fail(display = "Keychain error")]
 	Keychain(epic_keychain::Error),
 
 	/// Transaction Error
-	#[error("Transaction error")]
+	#[fail(display = "Transaction error")]
 	Transaction(transaction::Error),
 
 	/// API Error
-	#[error("Client Callback Error: {}", _0)]
+	#[fail(display = "Client Callback Error: {}", _0)]
 	ClientCallback(String),
 
 	/// Secp Error
-	#[error("Secp error")]
+	#[fail(display = "Secp error")]
 	Secp(secp::Error),
 
 	/// Callback implementation error conversion
-	#[error("Trait Implementation error")]
+	#[fail(display = "Trait Implementation error")]
 	CallbackImpl(&'static str),
 
 	/// Wallet backend error
-	#[error("Wallet store error: {}", _0)]
+	#[fail(display = "Wallet store error: {}", _0)]
 	Backend(String),
 
 	/// Callback implementation error conversion
-	#[error("Restore Error")]
+	#[fail(display = "Restore Error")]
 	Restore,
 
 	/// An error in the format of the JSON structures exchanged by the wallet
-	#[error("JSON format error: {}", _0)]
+	#[fail(display = "JSON format error: {}", _0)]
 	Format(String),
 
 	/// Other serialization errors
-	#[error("Ser/Deserialization error")]
+	#[fail(display = "Ser/Deserialization error")]
 	Deser(crate::epic_core::ser::Error),
 
 	/// IO Error
-	#[error("I/O error")]
+	#[fail(display = "I/O error")]
 	IO,
 
 	/// Error when contacting a node through its API
-	#[error("Node API error")]
+	#[fail(display = "Node API error")]
 	Node,
 
 	/// Error contacting wallet API
-	#[error("Wallet Communication Error: {}", _0)]
+	#[fail(display = "Wallet Communication Error: {}", _0)]
 	WalletComms(String),
 
 	/// Error originating from hyper.
-	#[error("Hyper error")]
+	#[fail(display = "Hyper error")]
 	Hyper,
 
 	/// Error originating from hyper uri parsing.
-	#[error("Uri parsing error")]
+	#[fail(display = "Uri parsing error")]
 	Uri,
 
 	/// Signature error
-	#[error("Signature error: {}", _0)]
+	#[fail(display = "Signature error: {}", _0)]
 	Signature(String),
 
 	/// OwnerAPIEncryption
-	#[error("{}", _0)]
+	#[fail(display = "{}", _0)]
 	APIEncryption(String),
 
 	/// Attempt to use duplicate transaction id in separate transactions
-	#[error("Duplicate transaction ID error")]
+	#[fail(display = "Duplicate transaction ID error")]
 	DuplicateTransactionId,
 
 	/// Wallet seed already exists
-	#[error("Wallet seed exists error: {}", _0)]
+	#[fail(display = "Wallet seed exists error: {}", _0)]
 	WalletSeedExists(String),
 
 	/// Wallet seed doesn't exist
-	#[error("Wallet seed doesn't exist error")]
+	#[fail(display = "Wallet seed doesn't exist error")]
 	WalletSeedDoesntExist,
 
 	/// Wallet seed doesn't exist
-	#[error("Wallet seed decryption error")]
+	#[fail(display = "Wallet seed decryption error")]
 	WalletSeedDecryption,
 
 	/// Transaction doesn't exist
-	#[error("Transaction {} doesn't exist", _0)]
+	#[fail(display = "Transaction {} doesn't exist", _0)]
 	TransactionDoesntExist(String),
 
 	/// Transaction already rolled back
-	#[error("Transaction {} cannot be cancelled", _0)]
+	#[fail(display = "Transaction {} cannot be cancelled", _0)]
 	TransactionNotCancellable(String),
 
 	/// Cancellation error
-	#[error("Cancellation Error: {}", _0)]
+	#[fail(display = "Cancellation Error: {}", _0)]
 	TransactionCancellationError(&'static str),
 
 	/// Cancellation error
-	#[error("Tx dump Error: {}", _0)]
+	#[fail(display = "Tx dump Error: {}", _0)]
 	TransactionDumpError(&'static str),
 
 	/// Attempt to repost a transaction that's already confirmed
-	#[error("Transaction already confirmed error")]
+	#[fail(display = "Transaction already confirmed error")]
 	TransactionAlreadyConfirmed,
 
 	/// Transaction has already been received
-	#[error("Transaction {} has already been received", _0)]
+	#[fail(display = "Transaction {} has already been received", _0)]
 	TransactionAlreadyReceived(String),
 
 	/// Attempt to repost a transaction that's not completed and stored
-	#[error("Transaction building not completed: {}", _0)]
+	#[fail(display = "Transaction building not completed: {}", _0)]
 	TransactionBuildingNotCompleted(u32),
 
 	/// Invalid BIP-32 Depth
-	#[error("Invalid BIP32 Depth (must be 1 or greater)")]
+	#[fail(display = "Invalid BIP32 Depth (must be 1 or greater)")]
 	InvalidBIP32Depth,
 
 	/// Attempt to add an account that exists
-	#[error("Account Label '{}' already exists", _0)]
+	#[fail(display = "Account Label '{}' already exists", _0)]
 	AccountLabelAlreadyExists(String),
 
 	/// Reference unknown account label
-	#[error("Unknown Account Label '{}'", _0)]
+	#[fail(display = "Unknown Account Label '{}'", _0)]
 	UnknownAccountLabel(String),
 
 	/// Error from summing commitments via committed trait.
-	#[error("Committed Error")]
+	#[fail(display = "Committed Error")]
 	Committed(committed::Error),
 
 	/// Can't parse slate version
-	#[error("Can't parse slate version")]
+	#[fail(display = "Can't parse slate version")]
 	SlateVersionParse,
 
 	/// Can't serialize slate
-	#[error("Can't Serialize slate")]
+	#[fail(display = "Can't Serialize slate")]
 	SlateSer,
 
 	/// Can't deserialize slate
-	#[error("Can't Deserialize slate")]
+	#[fail(display = "Can't Deserialize slate")]
 	SlateDeser,
 
 	/// Unknown slate version
-	#[error("Unknown Slate Version: {}", _0)]
+	#[fail(display = "Unknown Slate Version: {}", _0)]
 	SlateVersion(u16),
 
 	/// Compatibility error between incoming slate versions and what's expected
-	#[error("Compatibility Error: {}", _0)]
+	#[fail(display = "Compatibility Error: {}", _0)]
 	Compatibility(String),
 
 	/// Keychain doesn't exist (wallet not openend)
-	#[error("Keychain doesn't exist (has wallet been opened?)")]
+	#[fail(display = "Keychain doesn't exist (has wallet been opened?)")]
 	KeychainDoesntExist,
 
 	/// Lifecycle Error
-	#[error("Lifecycle Error: {}", _0)]
+	#[fail(display = "Lifecycle Error: {}", _0)]
 	Lifecycle(String),
 
 	/// Invalid Keychain Mask Error
-	#[error("Supplied Keychain Mask Token is incorrect")]
+	#[fail(display = "Supplied Keychain Mask Token is incorrect")]
 	InvalidKeychainMask,
 
 	/// Tor Process error
-	#[error("Tor Process Error: {}", _0)]
+	#[fail(display = "Tor Process Error: {}", _0)]
 	TorProcess(String),
 
 	/// Tor Configuration Error
-	#[error("Tor Config Error: {}", _0)]
+	#[fail(display = "Tor Config Error: {}", _0)]
 	TorConfig(String),
 
 	/// Generating ED25519 Public Key
-	#[error("Error generating ed25519 secret key: {}", _0)]
+	#[fail(display = "Error generating ed25519 secret key: {}", _0)]
 	ED25519Key(String),
 
 	/// Generating Payment Proof
-	#[error("Payment Proof generation error: {}", _0)]
+	#[fail(display = "Payment Proof generation error: {}", _0)]
 	PaymentProof(String),
 
 	/// Retrieving Payment Proof
-	#[error("Payment Proof retrieval error: {}", _0)]
+	#[fail(display = "Payment Proof retrieval error: {}", _0)]
 	PaymentProofRetrieval(String),
 
 	/// Retrieving Payment Proof
-	#[error("Payment Proof parsing error: {}", _0)]
+	#[fail(display = "Payment Proof parsing error: {}", _0)]
 	PaymentProofParsing(String),
 
 	/// Decoding OnionV3 addresses to payment proof addresses
-	#[error("Proof Address decoding: {}", _0)]
+	#[fail(display = "Proof Address decoding: {}", _0)]
 	AddressDecoding(String),
 
 	/// Transaction has expired it's TTL
-	#[error("Transaction Expired")]
+	#[fail(display = "Transaction Expired")]
 	TransactionExpired,
 
-	#[error("SQLite Error: {}", _0)]
-	SQLiteError(String),
-
-	#[error("Invalid base58 character!")]
-	InvalidBase58Character(char, usize),
-	#[error("Invalid base58 length")]
-	InvalidBase58Length,
-	#[error("Invalid base58 checksum")]
-	InvalidBase58Checksum,
-	#[error("Invalid base58 version bytes")]
-	InvalidBase58Version,
-	#[error("Invalid key")]
-	InvalidBase58Key,
-
-	#[error("Could not parse number from string")]
-	NumberParsingError,
-	#[error("Listener for {} closed", 0)]
-	ClosedListener(String),
-	#[error("Unable to encrypt message")]
-	Encryption,
-	#[error("Unable to decrypt message")]
-	Decryption,
-	#[error("Could not parse '{}' to a epicbox address", 0)]
-	EpicboxAddressParsingError(String),
-
 	/// Other
-	#[error("Generic error: {}", _0)]
+	#[fail(display = "Generic error: {}", _0)]
 	GenericError(String),
+}
 
-	#[error("Request error: {0}")]
-	RequestError(String),
+impl Display for Error {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let show_bt = match env::var("RUST_BACKTRACE") {
+			Ok(r) => {
+				if r == "1" {
+					true
+				} else {
+					false
+				}
+			}
+			Err(_) => false,
+		};
+		let backtrace = match self.backtrace() {
+			Some(b) => format!("{}", b),
+			None => String::from("Unknown"),
+		};
+		let inner_output = format!("{}", self.inner,);
+		let backtrace_output = format!("\n Backtrace: {}", backtrace);
+		let mut output = inner_output.clone();
+		if show_bt {
+			output.push_str(&backtrace_output);
+		}
+		Display::fmt(&output, f)
+	}
+}
 
-	#[error("Invalid Arguments: {}", _0)]
-	ArgumentError(String),
-	#[error("Parsing IO error: {}", _0)]
-	IOError(String),
-	#[error("User Cancelled")]
-	CancelledError,
+impl Error {
+	/// get kind
+	pub fn kind(&self) -> ErrorKind {
+		self.inner.get_context().clone()
+	}
+	/// get cause string
+	pub fn cause_string(&self) -> String {
+		match self.cause() {
+			Some(k) => format!("{}", k),
+			None => format!("Unknown"),
+		}
+	}
+	/// get cause
+	pub fn cause(&self) -> Option<&dyn Fail> {
+		self.inner.cause()
+	}
+	/// get backtrace
+	pub fn backtrace(&self) -> Option<&Backtrace> {
+		self.inner.backtrace()
+	}
+}
 
-	#[error("Too many unsuccessful attempts at reconnection")]
-	EpicboxReconnectLimit,
+impl From<ErrorKind> for Error {
+	fn from(kind: ErrorKind) -> Error {
+		Error {
+			inner: Context::new(kind),
+		}
+	}
+}
 
-	/// LibWallet Error
-	#[error("LibWallet Error: {:?}", _0)]
-	LibWallet(String),
-
-	#[error("NotFoundErr Error: {}", _0)]
-	NotFoundErr(String),
+impl From<Context<ErrorKind>> for Error {
+	fn from(inner: Context<ErrorKind>) -> Error {
+		Error { inner: inner }
+	}
 }
 
 impl From<io::Error> for Error {
 	fn from(_error: io::Error) -> Error {
-		Error::IO
+		Error {
+			inner: Context::new(ErrorKind::IO),
+		}
 	}
 }
 
 impl From<epic_keychain::Error> for Error {
 	fn from(error: epic_keychain::Error) -> Error {
-		Error::Keychain(error)
+		Error {
+			inner: Context::new(ErrorKind::Keychain(error)),
+		}
+	}
+}
+
+impl From<libtx::Error> for Error {
+	fn from(error: crate::epic_core::libtx::Error) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::LibTX(error.kind())),
+		}
 	}
 }
 
 impl From<transaction::Error> for Error {
 	fn from(error: transaction::Error) -> Error {
-		Error::Transaction(error)
+		Error {
+			inner: Context::new(ErrorKind::Transaction(error)),
+		}
 	}
 }
 
 impl From<crate::epic_core::ser::Error> for Error {
 	fn from(error: crate::epic_core::ser::Error) -> Error {
-		Error::Deser(error)
+		Error {
+			inner: Context::new(ErrorKind::Deser(error)),
+		}
 	}
 }
 
 impl From<secp::Error> for Error {
 	fn from(error: secp::Error) -> Error {
-		Error::Secp(error)
+		Error {
+			inner: Context::new(ErrorKind::Secp(error)),
+		}
 	}
 }
 
-impl From<sqlite::Error> for Error {
-	fn from(error: sqlite::Error) -> Error {
-		Error::SQLiteError(format!("{}", error))
-	}
-}
-impl From<crate::epic_core::libtx::Error> for Error {
-	fn from(error: crate::epic_core::libtx::Error) -> Error {
-		Error::LibTX(format!("{}", error))
-	}
-}
 impl From<committed::Error> for Error {
 	fn from(error: committed::Error) -> Error {
-		Error::Committed(error)
+		Error {
+			inner: Context::new(ErrorKind::Committed(error)),
+		}
+	}
+}
+
+impl From<epic_store::Error> for Error {
+	fn from(error: epic_store::Error) -> Error {
+		Error::from(ErrorKind::Backend(format!("{}", error)))
 	}
 }

@@ -14,6 +14,8 @@
 //! Functions to restore a wallet's outputs from just the master seed
 
 use crate::api_impl::owner_updater::StatusMessage;
+use crate::epic_core::consensus::{valid_header_version, WEEK_HEIGHT};
+use crate::epic_core::core::HeaderVersion;
 use crate::epic_core::global;
 use crate::epic_core::libtx::proof;
 use crate::epic_keychain::{Identifier, Keychain, SwitchCommitmentType};
@@ -74,20 +76,25 @@ where
 
 	let legacy_builder = proof::LegacyProofBuilder::new(keychain);
 	let builder = proof::ProofBuilder::new(keychain);
+	let legacy_version = HeaderVersion(6);
 
 	for output in outputs.iter() {
 		let (commit, proof, is_coinbase, height, mmr_index) = output;
 		// attempt to unwind message from the RP and get a value
 		// will fail if it's not ours
 		let info = {
-			// Try new rewind first
-			let info_new = proof::rewind(keychain.secp(), &builder, *commit, None, *proof)?;
-
-			// If new didn't work, try legacy rewind
-			if info_new.is_none() {
+			// Before HF+2wk, try legacy rewind first
+			let info_legacy = if valid_header_version(*height, legacy_version) {
 				proof::rewind(keychain.secp(), &legacy_builder, *commit, None, *proof)?
 			} else {
-				info_new
+				None
+			};
+
+			// If legacy didn't work, try new rewind
+			if info_legacy.is_none() {
+				proof::rewind(keychain.secp(), &builder, *commit, None, *proof)?
+			} else {
+				info_legacy
 			}
 		};
 
@@ -126,7 +133,7 @@ where
 			n_child: key_id.to_path().last_path_index(),
 			value: amount,
 			height: *height,
-			lock_height,
+			lock_height: lock_height,
 			is_coinbase: *is_coinbase,
 			mmr_index: *mmr_index,
 		});
@@ -252,7 +259,7 @@ where
 		key_id: output.key_id,
 		n_child: output.n_child,
 		mmr_index: Some(output.mmr_index),
-		commit,
+		commit: commit,
 		value: output.value,
 		status: OutputStatus::Unspent,
 		height: output.height,
@@ -360,7 +367,7 @@ where
 	// Now, get all outputs owned by this wallet (regardless of account)
 	let wallet_outputs = {
 		wallet_lock!(wallet_inst, w);
-		updater::retrieve_outputs(&mut **w, keychain_mask, true, false, None, None)?
+		updater::retrieve_outputs(&mut **w, keychain_mask, true, None, None)?
 	};
 
 	let mut missing_outs = vec![];
@@ -462,7 +469,7 @@ where
 			cancel_tx_log_entry(wallet_inst.clone(), keychain_mask, &o)?;
 			wallet_lock!(wallet_inst, w);
 			let mut batch = w.batch(keychain_mask)?;
-			batch.delete(&o.key_id, &o.mmr_index, &o.tx_log_entry)?;
+			batch.delete(&o.key_id, &o.mmr_index)?;
 			batch.commit()?;
 		}
 	}

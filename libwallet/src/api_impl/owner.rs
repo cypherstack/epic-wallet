@@ -18,23 +18,21 @@ use uuid::Uuid;
 
 use crate::epic_core::core::hash::Hashed;
 use crate::epic_core::core::Transaction;
+use crate::epic_core::ser;
+use crate::epic_util;
 use crate::epic_util::secp::key::SecretKey;
 use crate::epic_util::Mutex;
 
 use crate::api_impl::owner_updater::StatusMessage;
-use crate::config::EpicboxConfig;
 use crate::epic_keychain::{Identifier, Keychain};
-use crate::epic_util::secp::key::PublicKey;
-use crate::epicbox_address::EpicboxAddress;
 use crate::internal::{keys, scan, selection, tx, updater};
 use crate::slate::{PaymentInfo, Slate};
-use crate::types::{AcctPathMapping, NodeClient, TxLogEntry, WalletBackend, WalletInfo};
+use crate::types::{AcctPathMapping, NodeClient, TxLogEntry, TxWrapper, WalletBackend, WalletInfo};
 use crate::{
 	address, wallet_lock, InitTxArgs, IssueInvoiceTxArgs, NodeHeightResult, OutputCommitMapping,
 	PaymentProof, ScannedBlockInfo, TxLogEntryType, WalletInitStatus, WalletInst, WalletLCProvider,
 };
-
-use crate::Error;
+use crate::{Error, ErrorKind};
 use ed25519_dalek::PublicKey as DalekPublicKey;
 use ed25519_dalek::SecretKey as DalekSecretKey;
 
@@ -97,32 +95,6 @@ where
 	Ok(address::ed25519_keypair(&sec_addr_key)?.1)
 }
 
-/// Retrieve the payment address for the current parent key at
-/// the given index
-/// set active account
-pub fn get_public_address<'a, L, C, K>(
-	wallet_inst: Arc<Mutex<Box<dyn WalletInst<'a, L, C, K>>>>,
-	keychain_mask: Option<&SecretKey>,
-	epicbox_config: EpicboxConfig,
-	index: u32,
-) -> Result<EpicboxAddress, Error>
-where
-	L: WalletLCProvider<'a, C, K>,
-	C: NodeClient + 'a,
-	K: Keychain + 'a,
-{
-	wallet_lock!(wallet_inst, w);
-	let parent_key_id = w.parent_key_id();
-	let k = w.keychain(keychain_mask)?;
-	let sec_addr_key = address::address_from_derivation_path(&k, &parent_key_id, index)?;
-	let pub_key = PublicKey::from_secret_key(k.secp(), &sec_addr_key).unwrap();
-	Ok(EpicboxAddress::new(
-		pub_key,
-		Some(epicbox_config.epicbox_domain.unwrap()),
-		Some(epicbox_config.epicbox_port.unwrap()),
-	))
-}
-
 /// retrieve outputs
 pub fn retrieve_outputs<'a, L, C, K>(
 	wallet_inst: Arc<Mutex<Box<dyn WalletInst<'a, L, C, K>>>>,
@@ -130,7 +102,6 @@ pub fn retrieve_outputs<'a, L, C, K>(
 	status_send_channel: &Option<Sender<StatusMessage>>,
 	include_spent: bool,
 	refresh_from_node: bool,
-	show_full_history: bool,
 	tx_id: Option<u32>,
 ) -> Result<(bool, Vec<OutputCommitMapping>), Error>
 where
@@ -157,7 +128,6 @@ where
 			&mut **w,
 			keychain_mask,
 			include_spent,
-			show_full_history,
 			tx_id,
 			Some(&parent_key_id),
 		)?,
@@ -238,7 +208,7 @@ where
 	K: Keychain + 'a,
 {
 	if tx_id.is_none() && tx_slate_id.is_none() {
-		return Err(Error::PaymentProofRetrieval(
+		return Err(ErrorKind::PaymentProofRetrieval(
 			"Transaction ID or Slate UUID must be specified".into(),
 		)
 		.into());
@@ -261,14 +231,14 @@ where
 		tx_slate_id,
 	)?;
 	if txs.1.len() != 1 {
-		return Err(Error::PaymentProofRetrieval("Transaction doesn't exist".into()).into());
+		return Err(ErrorKind::PaymentProofRetrieval("Transaction doesn't exist".into()).into());
 	}
 	// Pull out all needed fields, returning an error if they're not present
 	let tx = txs.1[0].clone();
 	let proof = match tx.payment_proof {
 		Some(p) => p,
 		None => {
-			return Err(Error::PaymentProofRetrieval(
+			return Err(ErrorKind::PaymentProofRetrieval(
 				"Transaction does not contain a payment proof".into(),
 			)
 			.into());
@@ -286,7 +256,7 @@ where
 	let excess = match tx.kernel_excess {
 		Some(e) => e,
 		None => {
-			return Err(Error::PaymentProofRetrieval(
+			return Err(ErrorKind::PaymentProofRetrieval(
 				"Transaction does not contain kernel excess".into(),
 			)
 			.into());
@@ -295,7 +265,7 @@ where
 	let r_sig = match proof.receiver_signature {
 		Some(e) => e,
 		None => {
-			return Err(Error::PaymentProofRetrieval(
+			return Err(ErrorKind::PaymentProofRetrieval(
 				"Proof does not contain receiver signature ".into(),
 			)
 			.into());
@@ -304,15 +274,15 @@ where
 	let s_sig = match proof.sender_signature {
 		Some(e) => e,
 		None => {
-			return Err(Error::PaymentProofRetrieval(
+			return Err(ErrorKind::PaymentProofRetrieval(
 				"Proof does not contain sender signature ".into(),
 			)
 			.into());
 		}
 	};
 	Ok(PaymentProof {
-		amount,
-		excess,
+		amount: amount,
+		excess: excess,
 		recipient_address: address::onion_v3_from_pubkey(&proof.receiver_address)?,
 		recipient_sig: r_sig,
 		sender_address: address::onion_v3_from_pubkey(&proof.sender_address)?,
@@ -514,7 +484,7 @@ where
 	)?;
 	for t in &tx {
 		if t.tx_type == TxLogEntryType::TxSent {
-			return Err(Error::TransactionAlreadyReceived(ret_slate.id.to_string()).into());
+			return Err(ErrorKind::TransactionAlreadyReceived(ret_slate.id.to_string()).into());
 		}
 	}
 
@@ -570,7 +540,6 @@ pub fn tx_lock_outputs<'a, T: ?Sized, C, K>(
 	keychain_mask: Option<&SecretKey>,
 	slate: &Slate,
 	participant_id: usize,
-	addr_to: Option<String>,
 ) -> Result<(), Error>
 where
 	T: WalletBackend<'a, C, K>,
@@ -578,7 +547,7 @@ where
 	K: Keychain + 'a,
 {
 	let context = w.get_private_context(keychain_mask, slate.id.as_bytes(), participant_id)?;
-	selection::lock_tx_context(&mut *w, keychain_mask, slate, &context, addr_to)
+	selection::lock_tx_context(&mut *w, keychain_mask, slate, &context)
 }
 
 /// Finalize slate
@@ -600,7 +569,6 @@ where
 	tx::verify_slate_payment_proof(&mut *w, keychain_mask, &parent_key_id, &context, &sl)?;
 	tx::update_stored_tx(&mut *w, keychain_mask, &context, &mut sl, false)?;
 	tx::update_message(&mut *w, keychain_mask, &mut sl)?;
-
 	{
 		let mut batch = w.batch(keychain_mask)?;
 		batch.delete_private_context(sl.id.as_bytes(), 0)?;
@@ -628,7 +596,7 @@ where
 		status_send_channel,
 		false,
 	)? {
-		return Err(Error::TransactionCancellationError(
+		return Err(ErrorKind::TransactionCancellationError(
 			"Can't contact running Epic node. Not Cancelling.",
 		))?;
 	}
@@ -656,8 +624,8 @@ pub fn post_tx<'a, C>(client: &C, tx: &Transaction, fluff: bool) -> Result<(), E
 where
 	C: NodeClient + 'a,
 {
-	let res = client.post_tx(&tx, fluff);
-
+	let tx_hex = epic_util::to_hex(ser::ser_vec(tx, ser::ProtocolVersion(1)).unwrap());
+	let res = client.post_tx(&TxWrapper { tx_hex: tx_hex }, fluff);
 	if let Err(e) = res {
 		error!("api: post_tx: failed with error: {}", e);
 		Err(e)
@@ -741,8 +709,7 @@ where
 			updated_from_node: true,
 		}),
 		Err(_) => {
-			let outputs =
-				retrieve_outputs(wallet_inst, keychain_mask, &None, true, false, false, None)?;
+			let outputs = retrieve_outputs(wallet_inst, keychain_mask, &None, true, false, None)?;
 			let height = match outputs.1.iter().map(|m| m.output.height).max() {
 				Some(height) => height,
 				None => 0,
@@ -903,7 +870,7 @@ where
 	let last_confirmed_height = w.last_confirmed_height()?;
 	if let Some(e) = slate.ttl_cutoff_height {
 		if last_confirmed_height >= e {
-			return Err(Error::TransactionExpired)?;
+			return Err(ErrorKind::TransactionExpired)?;
 		}
 	}
 	Ok(())
@@ -935,12 +902,12 @@ where
 	// Check kernel exists
 	match client.get_kernel(&proof.excess, None, None) {
 		Err(e) => {
-			return Err(Error::PaymentProof(
+			return Err(ErrorKind::PaymentProof(
 				format!("Error retrieving kernel from chain: {}", e).to_owned(),
 			))?;
 		}
 		Ok(None) => {
-			return Err(Error::PaymentProof(
+			return Err(ErrorKind::PaymentProof(
 				format!(
 					"Transaction kernel with excess {:?} not found on chain",
 					proof.excess
@@ -954,14 +921,16 @@ where
 	// Check Sigs
 	let recipient_pubkey = address::pubkey_from_onion_v3(&proof.recipient_address)?;
 	if let Err(_) = recipient_pubkey.verify(&msg, &proof.recipient_sig) {
-		return Err(Error::PaymentProof(
+		return Err(ErrorKind::PaymentProof(
 			"Invalid recipient signature".to_owned(),
 		))?;
 	};
 
 	let sender_pubkey = address::pubkey_from_onion_v3(&proof.sender_address)?;
 	if let Err(_) = sender_pubkey.verify(&msg, &proof.sender_sig) {
-		return Err(Error::PaymentProof("Invalid sender signature".to_owned()))?;
+		return Err(ErrorKind::PaymentProof(
+			"Invalid sender signature".to_owned(),
+		))?;
 	};
 
 	// for now, simple test as to whether one of the addresses belongs to this wallet
@@ -969,7 +938,7 @@ where
 	let d_skey = match DalekSecretKey::from_bytes(&sec_key.0) {
 		Ok(k) => k,
 		Err(e) => {
-			return Err(Error::ED25519Key(format!("{}", e)).to_owned())?;
+			return Err(ErrorKind::ED25519Key(format!("{}", e)).to_owned())?;
 		}
 	};
 	let my_address_pubkey: DalekPublicKey = (&d_skey).into();
@@ -980,6 +949,7 @@ where
 	Ok((sender_mine, recipient_mine))
 }
 
+/// Attempt to upda
 /// Attempt to update outputs in wallet, return whether it was successful
 fn update_outputs<'a, L, C, K>(
 	wallet_inst: Arc<Mutex<Box<dyn WalletInst<'a, L, C, K>>>>,
@@ -996,7 +966,7 @@ where
 	match updater::refresh_outputs(&mut **w, keychain_mask, &parent_key_id, update_all) {
 		Ok(_) => Ok(true),
 		Err(e) => {
-			if let Error::InvalidKeychainMask = e {
+			if let ErrorKind::InvalidKeychainMask = e.kind() {
 				return Err(e);
 			}
 			Ok(false)

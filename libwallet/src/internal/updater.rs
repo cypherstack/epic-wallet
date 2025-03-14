@@ -18,10 +18,11 @@
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::epic_core::consensus::{cumulative_reward_foundation, reward};
+use crate::epic_core::consensus::{cumulative_reward_foundation, header_version, reward};
+use crate::epic_core::core::block::HeaderVersion;
 use crate::epic_core::core::{Output, TxKernel};
 use crate::epic_core::global;
-use crate::epic_core::libtx::proof::ProofBuilder;
+use crate::epic_core::libtx::proof::{LegacyProofBuilder, ProofBuilder};
 use crate::epic_core::libtx::reward;
 use crate::epic_keychain::{Identifier, Keychain, SwitchCommitmentType};
 use crate::epic_util as util;
@@ -40,7 +41,6 @@ pub fn retrieve_outputs<'a, T: ?Sized, C, K>(
 	wallet: &mut T,
 	keychain_mask: Option<&SecretKey>,
 	show_spent: bool,
-	show_full_history: bool,
 	tx_id: Option<u32>,
 	parent_key_id: Option<&Identifier>,
 ) -> Result<Vec<OutputCommitMapping>, Error>
@@ -54,15 +54,6 @@ where
 		.iter()
 		.filter(|out| show_spent || out.status != OutputStatus::Spent)
 		.collect::<Vec<_>>();
-
-	if show_full_history {
-		outputs.append(
-			&mut wallet
-				.history_iter()
-				.filter(|out| show_spent || out.status != OutputStatus::Spent)
-				.collect::<Vec<_>>(),
-		);
-	}
 
 	// only include outputs with a given tx_id if provided
 	if let Some(id) = tx_id {
@@ -80,7 +71,7 @@ where
 			.collect();
 	}
 
-	outputs.sort_by_key(|out| (out.n_child, out.tx_log_entry));
+	outputs.sort_by_key(|out| out.n_child);
 	let keychain = wallet.keychain(keychain_mask)?;
 
 	let res = outputs
@@ -231,7 +222,7 @@ where
 	for mut o in outputs {
 		// unlock locked outputs
 		if o.status == OutputStatus::Unconfirmed {
-			batch.delete(&o.key_id, &o.mmr_index, &Some(tx.id))?;
+			batch.delete(&o.key_id, &o.mmr_index)?;
 		}
 		if o.status == OutputStatus::Locked {
 			o.status = OutputStatus::Unspent;
@@ -403,7 +394,7 @@ where
 	}
 	let mut batch = wallet.batch(keychain_mask)?;
 	for id in ids_to_del {
-		batch.delete(&id, &None, &None)?;
+		batch.delete(&id, &None)?;
 	}
 	batch.commit()?;
 	Ok(())
@@ -458,7 +449,6 @@ where
 				locked_total += out.value;
 			}
 			OutputStatus::Spent => {}
-			OutputStatus::Deleted => {}
 		}
 	}
 
@@ -559,11 +549,11 @@ where
 			key_id: key_id.clone(),
 			n_child: key_id.to_path().last_path_index(),
 			mmr_index: None,
-			commit,
+			commit: commit,
 			value: amount,
 			status: OutputStatus::Unconfirmed,
-			height,
-			lock_height,
+			height: height,
+			lock_height: lock_height,
 			is_coinbase: true,
 			tx_log_entry: None,
 		})?;
@@ -629,11 +619,11 @@ where
 			key_id: key_id.clone(),
 			n_child: key_id.to_path().last_path_index(),
 			mmr_index: None,
-			commit,
+			commit: commit,
 			value: amount,
 			status: OutputStatus::Unconfirmed,
-			height,
-			lock_height,
+			height: height,
+			lock_height: lock_height,
 			is_coinbase: true,
 			tx_log_entry: None,
 		})?;

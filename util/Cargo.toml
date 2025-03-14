@@ -1,7 +1,7 @@
 [package]
-name = "stack_epic_wallet_util"
-version = "3.6.0"
-authors = ["Epic Developers <info@epiccash.com>"]
+name = "cs_epic_wallet_util"
+version = "1.0.0" # 1.0.0 = 3.6.0
+authors = ["Epic Developers <info@epiccash.com>", "Likho", "sneurlax"]
 description = "Util, for generic utilities and to re-export epic crates"
 license = "Apache-2.0"
 repository = "https://github.com/cypherstack/epic-wallet"
@@ -23,12 +23,12 @@ dirs = "1.0.3"
 #epic_api      = { git = "https://github.com/EpicCash/epic", tag = "v3.6.0" }
 #epic_store    = { git = "https://github.com/EpicCash/epic", tag = "v3.6.0" }
 
-epic_core = { package = "stack_epic_core", version = "3.6.0" }
-epic_chain = { package = "stack_epic_chain", version = "3.6.0" }
-epic_api = { package = "stack_epic_api", version = "3.6.0" }
-epic_store = { package = "stack_epic_store", version = "3.6.0" }
-epic_keychain = { package = "stack_epic_keychain", version = "3.6.0" }
-epic_util = { package = "stack_epic_util", version = "3.6.0" }
+epic_core = { package = "cs_epic_core", version = "^1.0.1" }
+epic_chain = { package = "cs_epic_chain", version = "^1.0.1" }
+epic_api = { package = "cs_epic_api", version = "^1.0.0" }
+epic_store = { package = "cs_epic_store", version = "^1.0.0" }
+epic_keychain = { package = "cs_epic_keychain", version = "^1.0.1" }
+epic_util = { package = "cs_epic_util", version = "^1.0.1" }
 
 # For Local use
 # epic/

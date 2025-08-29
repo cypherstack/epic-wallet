@@ -19,7 +19,7 @@
 use crate::serialization as ser;
 use crate::serialization::Serializable;
 use crate::Error;
-use sqlite::{self, Connection};
+use sqlite::{self, Connection, State};
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
@@ -65,31 +65,30 @@ impl Store {
 		PRAGMA journal_mode=WAL; -- better write-concurrency
 		PRAGMA synchronous=NORMAL; -- fsync only in critical moments
 		PRAGMA wal_checkpoint(TRUNCATE); -- free some space by truncating possibly massive WAL files from the last run.
-		"#;
+		";
 		db.execute(creation)
 	}
 
 	/// Returns a single value of the database
 	/// This returns a Serializable enum
 	pub fn get(&self, key: &[u8]) -> Option<Serializable> {
-		let query = format!(
-			r#"
+		let query = r#"
 			SELECT
 				data
 			FROM
 				data
 			WHERE
-				key = "{:?}"
+				key = ?
 			LIMIT 1;
-			"#,
-			key
-		);
-		match self.db.prepare(query).unwrap().into_iter().next() {
-			Some(s) => {
-				let data = s.unwrap().read::<&str, _>("data").to_string();
+			";
+		let mut statement = self.db.prepare(query).unwrap();
+		statement.bind(1, key).unwrap();
+		match statement.next().unwrap() {
+			State::Row => {
+				let data = statement.read::<&str>(0).to_string();
 				Some(ser::deserialize(&data).unwrap())
 			}
-			None => None,
+			State::Done => None,
 		}
 	}
 
@@ -101,44 +100,39 @@ impl Store {
 
 	/// Check if a key exists on the database
 	pub fn exists(&self, key: &[u8]) -> Result<bool, Error> {
-		let query = format!(
-			r#"
+		let query = r#"
 			SELECT
 				*
 			FROM
 				data
 			WHERE
-				key = "{:?}"
+				key = ?
 			LIMIT 1;
-			"#,
-			key
-		);
-		let mut statement = self.db.prepare(query).unwrap().into_iter();
-		Ok(statement.next().is_some())
+			";
+		let mut statement = self.db.prepare(query).unwrap();
+		statement.bind(1, key).unwrap();
+	 Ok(statement.next().unwrap() == State::Row)
 	}
 
 	/// Provided a 'from' as prefix, returns a vector of Serializable enums
 	pub fn iter(&self, from: &[u8]) -> Vec<Serializable> {
-		let query = format!(
-			r#"
+		let query = r#"
 			SELECT
 				data
 			FROM
 				data
 			WHERE
-				prefix = "{}";
-			"#,
-			String::from_utf8(from.to_vec()).unwrap()
-		);
-		self.db
-			.prepare(query)
-			.unwrap()
-			.into_iter()
-			.map(|row| {
-				let row = row.unwrap();
-				ser::deserialize(row.read::<&str, _>("data")).unwrap()
-			})
-			.collect()
+				prefix = ?;
+			";
+		let mut statement = self.db.prepare(query).unwrap();
+		let prefix = String::from_utf8(from.to_vec()).unwrap();
+		statement.bind(1, &prefix).unwrap();
+		let mut results = Vec::new();
+		while statement.next().unwrap() == State::Row {
+			let data = statement.read::<&str>(0);
+			results.push(ser::deserialize(data).unwrap());
+		}
+		results
 	}
 
 	/// Builds a new batch to be used with this store
@@ -167,7 +161,7 @@ impl Store {
 						return Err(e);
 					}
 					thread::sleep(Duration::from_millis(100));
-				}
+					}
 			}
 		}
 
@@ -188,22 +182,21 @@ impl<'a> Batch<'_> {
 		let value_s = ser::serialize(&value).unwrap();
 		let prefix = key[0] as char;
 
-		// Insert on the database
-		// TxLogEntry and OutputData make use of queriable columns
+		// Insert or update logic remains (parameterization for reads only)
 		let mut query = match &value {
 			Serializable::TxLogEntry(t) => format!(
 				r#"INSERT INTO data
-						(key, data, prefix, q_tx_id, q_confirmed, q_tx_status)
-					VALUES
-						("{:?}", '{}', "{}", {}, {}, "{}");
+					(key, data, prefix, q_tx_id, q_confirmed, q_tx_status)
+				VALUES
+					("{:?}", '{}', "{}", {}, {}, "{}");
 				"#,
 				key, value_s, prefix, t.id, t.confirmed, t.tx_type
 			),
 			Serializable::OutputData(o) => format!(
 				r#"INSERT INTO data
-						(key, data, prefix, q_tx_id, q_tx_status)
-					VALUES
-						("{:?}", '{}', "{}", "{}", "{}")
+					(key, data, prefix, q_tx_id, q_tx_status)
+				VALUES
+					("{:?}", '{}', "{}", "{}", "{}");
 				"#,
 				key,
 				value_s,
@@ -216,57 +209,55 @@ impl<'a> Batch<'_> {
 			),
 			_ => format!(
 				r#"INSERT INTO data
-						(key, data, prefix)
-					VALUES
-						("{:?}", '{}', "{}");
+					(key, data, prefix)
+				VALUES
+					("{:?}", '{}', "{}");
 				"#,
 				key, value_s, prefix
 			),
 		};
 
-		// Update if the current key exists on the database
-		// TxLogEntry and OutputData make use of queriable columns
 		if self.exists(&key).unwrap() {
 			query = match &value {
 				Serializable::TxLogEntry(t) => format!(
 					r#"UPDATE data
-						SET
-							data = '{}',
-							q_tx_id = {},
-							q_confirmed = {},
-							q_tx_status = "{}"
-						WHERE
-							key = "{:?}";
-					"#,
-					value_s, t.id, t.confirmed, t.tx_type, key
+					SET
+						data = '{}',
+						q_tx_id = {},
+						q_confirmed = {},
+						q_tx_status = "{}"
+					WHERE
+						key = "{:?}";
+				"#,
+				value_s, t.id, t.confirmed, t.tx_type, key
 				),
 				Serializable::OutputData(o) => format!(
 					r#"UPDATE data
-						SET
-							data = '{}',
-							q_tx_id = "{}",
-							q_tx_status = "{}"
-						WHERE
-							key = "{:?}";
-					"#,
-					value_s,
-					match o.tx_log_entry {
-						Some(entry) => entry.to_string(),
-						None => "".to_string(),
-					},
-					o.status,
-					key
+					SET
+						data = '{}',
+						q_tx_id = "{}",
+						q_tx_status = "{}"
+					WHERE
+						key = "{:?}";
+				"#,
+				value_s,
+				match o.tx_log_entry {
+					Some(entry) => entry.to_string(),
+					None => "".to_string(),
+				},
+				o.status,
+				key
 				),
 				_ => format!(
 					r#"UPDATE data
-						SET
-							data = '{}'
-						WHERE
-							key = "{:?}";
-					"#,
-					value_s, key
+					SET
+						data = '{}'
+					WHERE
+						key = "{:?}";
+				"#,
+				value_s, key
 				),
-			};
+			}
 		}
 		Ok(self.store.execute(query).unwrap())
 	}
@@ -291,17 +282,16 @@ impl<'a> Batch<'_> {
 
 	/// Deletes a key from the db
 	pub fn delete(&self, key: &[u8]) -> Result<(), Error> {
-		let statement = format!(
-			r#"
+		let statement = r#"
 		DELETE
 		FROM
 			data
 		WHERE
-			key = "{:?}"
-		"#,
-			key
-		);
-		self.store.execute(statement)?;
+			key = ?
+		"#;
+		let mut stmt = self.store.db.prepare(statement).unwrap();
+		stmt.bind(1, key).unwrap();
+		stmt.next().unwrap();
 		Ok(())
 	}
 
@@ -313,4 +303,4 @@ impl<'a> Batch<'_> {
 }
 
 unsafe impl Sync for Store {}
-unsafe impl Send for Store {}
+safe impl Send for Store {}

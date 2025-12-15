@@ -15,7 +15,7 @@
 //! Client functions, implementations of the NodeClient trait
 
 use crate::api::{self, LocatedTxKernel, OutputListing, OutputPrintable};
-use crate::client_utils::{Client, RUNTIME};
+use crate::client_utils::{Client, ClientError, RUNTIME};
 use crate::core::core::Transaction;
 
 use crate::core::core::TxKernel;
@@ -107,6 +107,31 @@ impl HTTPNodeClient {
 				}
 			},
 			Err(e) => {
+				// If decoding into our JSON-RPC Response wrapper fails (shape drift),
+				// try decoding directly into the expected type before bailing.
+				if let ClientError::ResponseError(_) = e {
+					match self.client.post::<Request, serde_json::Value>(
+						url.as_str(),
+						self.node_api_secret(),
+						&req,
+					) {
+						Ok(raw_val) => {
+							return serde_json::from_value::<D>(raw_val.clone()).map_err(|decode_err| {
+								let report = format!(
+									"Error decoding response for {}: {}; raw: {}",
+									method, decode_err, raw_val
+								);
+								Error::ClientCallback(report)
+							});
+						}
+						Err(e2) => {
+							let report = format!("Error calling {}: {}", method, e2);
+							debug!("{}", report);
+							return Err(Error::ClientCallback(report).into());
+						}
+					}
+				}
+
 				let report = format!("Error calling {}: {}", method, e);
 				debug!("{}", report);
 				Err(Error::ClientCallback(report).into())

@@ -19,6 +19,7 @@
 use crate::serialization as ser;
 use crate::serialization::Serializable;
 use crate::Error;
+use epic_wallet_util::epic_util as util;
 use sqlite::{self, Connection};
 use std::path::PathBuf;
 use std::thread;
@@ -30,6 +31,15 @@ static SQLITE_FILENAME: &str = "epic.db";
 /// Basic struct holding the SQLite database connection
 pub struct Store {
     db: Connection,
+}
+
+/// Quote helpers for building SQLite statements safely
+fn blob_literal(bytes: &[u8]) -> String {
+    format!("x'{}'", util::to_hex(bytes.to_vec()))
+}
+
+fn quote_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 impl Store {
@@ -79,10 +89,10 @@ impl Store {
 			FROM
 				data
 			WHERE
-				key = "{:?}"
+				key = {}
 			LIMIT 1;
 			"#,
-            key
+            blob_literal(key)
         );
         match self.db.prepare(query).unwrap().into_iter().next() {
             Some(s) => {
@@ -108,10 +118,10 @@ impl Store {
 			FROM
 				data
 			WHERE
-				key = "{:?}"
+				key = {}
 			LIMIT 1;
 			"#,
-            key
+            blob_literal(key)
         );
         let mut statement = self.db.prepare(query).unwrap().into_iter();
         Ok(statement.next().is_some())
@@ -126,9 +136,9 @@ impl Store {
 			FROM
 				data
 			WHERE
-				prefix = "{}";
+				prefix = {};
 			"#,
-            String::from_utf8(from.to_vec()).unwrap()
+            quote_literal(&String::from_utf8(from.to_vec()).unwrap())
         );
         self.db
             .prepare(query)
@@ -195,32 +205,41 @@ impl<'a> Batch<'_> {
                 r#"INSERT INTO data
 						(key, data, prefix, q_tx_id, q_confirmed, q_tx_status)
 					VALUES
-						("{:?}", '{}', "{}", {}, {}, "{}");
+						({}, {}, {}, {}, {}, {});
 				"#,
-                key, value_s, prefix, t.id, t.confirmed, t.tx_type
+                blob_literal(key),
+                quote_literal(&value_s),
+                quote_literal(&prefix.to_string()),
+                t.id,
+                t.confirmed,
+                quote_literal(&t.tx_type.to_string())
             ),
             Serializable::OutputData(o) => format!(
                 r#"INSERT INTO data
-						(key, data, prefix, q_tx_id, q_tx_status)
-					VALUES
-						("{:?}", '{}', "{}", "{}", "{}")
+							(key, data, prefix, q_tx_id, q_tx_status)
+						VALUES
+						({}, {}, {}, {}, {})
 				"#,
-                key,
-                value_s,
-                prefix,
-                match o.tx_log_entry {
-                    Some(entry) => entry.to_string(),
-                    None => "".to_string(),
-                },
-                o.status
+                blob_literal(key),
+                quote_literal(&value_s),
+                quote_literal(&prefix.to_string()),
+                quote_literal(
+                    &match o.tx_log_entry {
+                        Some(entry) => entry.to_string(),
+                        None => "".to_string(),
+                    }
+                ),
+                quote_literal(&o.status.to_string())
             ),
             _ => format!(
                 r#"INSERT INTO data
-						(key, data, prefix)
-					VALUES
-						("{:?}", '{}', "{}");
+							(key, data, prefix)
+						VALUES
+						({}, {}, {});
 				"#,
-                key, value_s, prefix
+                blob_literal(key),
+                quote_literal(&value_s),
+                quote_literal(&prefix.to_string())
             ),
         };
 
@@ -231,40 +250,47 @@ impl<'a> Batch<'_> {
                 Serializable::TxLogEntry(t) => format!(
                     r#"UPDATE data
 						SET
-							data = '{}',
+							data = {},
 							q_tx_id = {},
 							q_confirmed = {},
-							q_tx_status = "{}"
+							q_tx_status = {}
 						WHERE
-							key = "{:?}";
+							key = {};
 					"#,
-                    value_s, t.id, t.confirmed, t.tx_type, key
+                    quote_literal(&value_s),
+                    t.id,
+                    t.confirmed,
+                    quote_literal(&t.tx_type.to_string()),
+                    blob_literal(key)
                 ),
                 Serializable::OutputData(o) => format!(
                     r#"UPDATE data
-						SET
-							data = '{}',
-							q_tx_id = "{}",
-							q_tx_status = "{}"
+							SET
+							data = {},
+							q_tx_id = {},
+							q_tx_status = {}
 						WHERE
-							key = "{:?}";
+							key = {};
 					"#,
-                    value_s,
-                    match o.tx_log_entry {
-                        Some(entry) => entry.to_string(),
-                        None => "".to_string(),
-                    },
-                    o.status,
-                    key
+                    quote_literal(&value_s),
+                    quote_literal(
+                        &match o.tx_log_entry {
+                            Some(entry) => entry.to_string(),
+                            None => "".to_string(),
+                        }
+                    ),
+                    quote_literal(&o.status.to_string()),
+                    blob_literal(key)
                 ),
                 _ => format!(
                     r#"UPDATE data
 						SET
-							data = '{}'
+							data = {}
 						WHERE
-							key = "{:?}";
+							key = {};
 					"#,
-                    value_s, key
+                    quote_literal(&value_s),
+                    blob_literal(key)
                 ),
             };
         }
@@ -297,9 +323,9 @@ impl<'a> Batch<'_> {
 		FROM
 			data
 		WHERE
-			key = "{:?}"
+			key = {}
 		"#,
-            key
+            blob_literal(key)
         );
         self.store.execute(statement)?;
         Ok(())

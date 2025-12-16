@@ -434,6 +434,11 @@ impl EpicboxSubscriber {
 		publisher: &EpicboxPublisher,
 		is_node_synced: Arc<AtomicBool>,
 	) -> Result<Self, Error> {
+		debug!(
+			"[epicbox] subscriber init: address={}, wallet_mode={}",
+			publisher.address.stripped(),
+			publisher.wallet_mode
+		);
 		Ok(Self {
 			address: publisher.address.clone(),
 			broker: publisher.broker.clone(),
@@ -472,6 +477,12 @@ impl Container {
 			//TODO: reduce listeners
 			listeners: HashMap::with_capacity(4),
 		};
+		debug!(
+			"[epicbox] container init: domain={:?}, port={:?}, unsecure={:?}",
+			container.config.epicbox_domain,
+			container.config.epicbox_port,
+			container.config.epicbox_protocol_unsecure
+		);
 		Arc::new(Mutex::new(container))
 	}
 
@@ -834,7 +845,11 @@ impl EpicboxBroker {
 
 									first_run = false;
 
-									info!("Starting epicbox subscription...");
+									info!(
+										"[epicbox] subscription start: address={}, wallet_mode={}",
+										client.address.public_key.to_string(),
+										wallet_mode
+									);
 								}
 
 								let signature = sign_challenge(&str, &secret_key)?.to_hex();

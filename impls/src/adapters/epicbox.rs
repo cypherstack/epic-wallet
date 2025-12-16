@@ -170,7 +170,13 @@ impl EpicboxListenChannel {
 		};
 		let (tx, _rx): (Sender<bool>, Receiver<bool>) = channel();
 
-		debug!("Connecting to the epicbox server at {} ..", url.clone());
+			debug!(
+				"[epicbox] listener connect: url={}, domain={}, port={:?}, unsecure={:?}",
+				url.clone(),
+				address.domain,
+				address.port,
+				epicbox_config.epicbox_protocol_unsecure
+			);
 		let (socket, _response) = connect(url.clone()).map_err(|e| {
 			warn!("{}", Error::EpicboxTungstenite(format!("{}", e).into()));
 			*reconnections += 1;
@@ -310,7 +316,13 @@ where
 			),
 		}
 	};
-	debug!("Connecting to the epicbox server at {} ..", url.clone());
+	debug!(
+		"[epicbox] connecting send/listen channel: url={}, domain={}, port={:?}, unsecure={:?}",
+		url.clone(),
+		address.domain,
+		address.port,
+		config.epicbox_protocol_unsecure
+	);
 	let (socket, _) = connect(url.clone()).expect(CONNECTION_ERR_MSG);
 
 	let publisher =
@@ -358,6 +370,13 @@ impl Listener for EpicboxListener {
 	/// post slate
 	fn publish(&self, slate: &VersionedSlate, to: &String) -> Result<(), Error> {
 		let address = EpicboxAddress::from_str(to)?;
+		let slate_for_log: Slate = slate.clone().into();
+		debug!(
+			"[epicbox] publish: from={}, to={}, slate_id={}",
+			self.address.stripped(),
+			address.stripped(),
+			slate_for_log.id.to_string()
+		);
 		self.publisher.post_slate(slate, &address, true)
 	}
 
@@ -394,6 +413,14 @@ impl Publisher for EpicboxPublisher {
 		to: &EpicboxAddress,
 		close_connection: bool,
 	) -> Result<(), Error> {
+		let slate_for_log: Slate = slate.clone().into();
+		debug!(
+			"[epicbox] post_slate: wallet_mode={}, from={}, to={}, slate_id={}",
+			self.wallet_mode,
+			self.address.stripped(),
+			to.stripped(),
+			slate_for_log.id.to_string()
+		);
 		self.broker
 			.post_slate(slate, &to, &self.address, &self.secret_key)?;
 		if close_connection {
@@ -610,6 +637,13 @@ where
 		slate: &VersionedSlate,
 		tx_proof: Option<&mut TxProof>,
 	) {
+		let slate_for_log: Slate = slate.clone().into();
+		debug!(
+			"[epicbox] on_slate: from={}, slate_id={}, version={:?}",
+			from.stripped(),
+			slate_for_log.id.to_string(),
+			slate.version()
+		);
 		let version = slate.version();
 		let mut slate: Slate = slate.into();
 

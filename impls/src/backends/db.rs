@@ -19,6 +19,7 @@
 use crate::serialization as ser;
 use crate::serialization::Serializable;
 use crate::Error;
+use log::{error, warn};
 use serde_json;
 use sqlite::{self, Connection, State, Value};
 use std::path::PathBuf;
@@ -121,7 +122,17 @@ impl Store {
         match statement.next().ok()? {
             State::Row => {
                 let data = statement.read::<String, _>("data").ok()?;
-                Some(ser::deserialize(&data).unwrap())
+                match ser::deserialize(&data) {
+                    Ok(deser) => Some(deser),
+                    Err(e) => {
+                        error!(
+                            "Failed to deserialize value for key: {} ({:?})",
+                            String::from_utf8_lossy(key),
+                            e
+                        );
+                        None
+                    }
+                }
             }
             State::Done => None,
         }
@@ -171,7 +182,10 @@ impl Store {
         statement.bind((1, prefix.as_str())).unwrap();
         while let State::Row = statement.next().unwrap() {
             let data = statement.read::<String, _>("data").unwrap();
-            results.push(ser::deserialize(&data).unwrap());
+            match ser::deserialize(&data) {
+                Ok(deser) => results.push(deser),
+                Err(e) => warn!("Failed to deserialize row for prefix {}: {:?}", prefix, e),
+            }
         }
         results
     }

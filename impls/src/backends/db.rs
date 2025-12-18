@@ -19,7 +19,8 @@
 use crate::serialization as ser;
 use crate::serialization::Serializable;
 use crate::Error;
-use sqlite::{self, Connection};
+use serde_json;
+use sqlite::{self, Connection, State, Value};
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
@@ -37,6 +38,7 @@ impl Store {
         let db_path = db_path.join(SQLITE_FILENAME);
         let db: Connection = sqlite::open(db_path)?;
         Store::check_or_create(&db)?;
+        Store::migrate_legacy_keys(&db)?;
         Ok(Store { db })
     }
 
@@ -69,27 +71,59 @@ impl Store {
         db.execute(creation)
     }
 
+    /// Convert legacy text-rendered keys (e.g. "[97, 58, ...]") into raw blobs so they
+    /// continue to work with bound-parameter queries.
+    fn migrate_legacy_keys(db: &Connection) -> Result<(), sqlite::Error> {
+        let mut rows_to_fix: Vec<(i64, Vec<u8>)> = Vec::new();
+        let mut stmt = db.prepare("SELECT id, key FROM data")?;
+
+        for row_result in stmt.into_iter() {
+            let row = row_result?;
+            // Legacy rows stored the debug representation of the byte slice, so read as text.
+            if let Ok(key_str) = row.try_read::<&str, _>("key") {
+                if key_str.starts_with('[') && key_str.ends_with(']') {
+                    if let Ok(bytes) = serde_json::from_str::<Vec<u8>>(key_str) {
+                        let id = row.try_read::<i64, _>("id")?;
+                        rows_to_fix.push((id, bytes));
+                    }
+                }
+            }
+        }
+
+        for (id, bytes) in rows_to_fix {
+            let mut update = db.prepare("UPDATE data SET key = ?1 WHERE id = ?2")?;
+            update.bind((1, Value::Binary(bytes)))?;
+            update.bind((2, id))?;
+            update.next()?;
+        }
+
+        Ok(())
+    }
+
     /// Returns a single value of the database
     /// This returns a Serializable enum
     pub fn get(&self, key: &[u8]) -> Option<Serializable> {
-        let query = format!(
-            r#"
-			SELECT
-				data
-			FROM
-				data
-			WHERE
-				key = "{:?}"
-			LIMIT 1;
-			"#,
-            key
-        );
-        match self.db.prepare(query).unwrap().into_iter().next() {
-            Some(s) => {
-                let data = s.unwrap().read::<&str, _>("data").to_string();
+        let mut statement = self
+            .db
+            .prepare(
+                r#"
+				SELECT
+					data
+				FROM
+					data
+				WHERE
+					key = ?1
+				LIMIT 1;
+				"#,
+            )
+            .ok()?;
+        statement.bind((1, key)).ok()?;
+        match statement.next().ok()? {
+            State::Row => {
+                let data = statement.read::<String, _>("data").ok()?;
                 Some(ser::deserialize(&data).unwrap())
             }
-            None => None,
+            State::Done => None,
         }
     }
 
@@ -101,44 +135,45 @@ impl Store {
 
     /// Check if a key exists on the database
     pub fn exists(&self, key: &[u8]) -> Result<bool, Error> {
-        let query = format!(
+        let mut statement = self.db.prepare(
             r#"
 			SELECT
-				*
+				1
 			FROM
 				data
 			WHERE
-				key = "{:?}"
+				key = ?1
 			LIMIT 1;
 			"#,
-            key
-        );
-        let mut statement = self.db.prepare(query).unwrap().into_iter();
-        Ok(statement.next().is_some())
+        )?;
+        statement.bind((1, key))?;
+        let mut cursor = statement.into_iter();
+        Ok(cursor.next().is_some())
     }
 
     /// Provided a 'from' as prefix, returns a vector of Serializable enums
     pub fn iter(&self, from: &[u8]) -> Vec<Serializable> {
-        let query = format!(
-            r#"
-			SELECT
-				data
-			FROM
-				data
-			WHERE
-				prefix = "{}";
-			"#,
-            String::from_utf8(from.to_vec()).unwrap()
-        );
-        self.db
-            .prepare(query)
-            .unwrap()
-            .into_iter()
-            .map(|row| {
-                let row = row.unwrap();
-                ser::deserialize(row.read::<&str, _>("data")).unwrap()
-            })
-            .collect()
+        let mut results = Vec::new();
+        let prefix = String::from_utf8(from.to_vec()).unwrap();
+        let mut statement = self
+            .db
+            .prepare(
+                r#"
+				SELECT
+					data
+				FROM
+					data
+				WHERE
+					prefix = ?1;
+				"#,
+            )
+            .unwrap();
+        statement.bind((1, prefix.as_str())).unwrap();
+        while let State::Row = statement.next().unwrap() {
+            let data = statement.read::<String, _>("data").unwrap();
+            results.push(ser::deserialize(&data).unwrap());
+        }
+        results
     }
 
     /// Builds a new batch to be used with this store
@@ -150,15 +185,33 @@ impl Store {
     /// If the database is locked due to another writing process,
     /// The code will retry the same statement after 100 milliseconds
     pub fn execute(&self, statement: String) -> Result<(), sqlite::Error> {
+        self.execute_with_retry(|| self.db.execute(&statement))
+    }
+
+    fn execute_prepared<F>(&self, sql: &str, mut bind: F) -> Result<(), sqlite::Error>
+    where
+        F: FnMut(&mut sqlite::Statement<'_>) -> Result<(), sqlite::Error>,
+    {
+        self.execute_with_retry(|| {
+            let mut statement = self.db.prepare(sql)?;
+            bind(&mut statement)?;
+            statement.next().map(|_| ())
+        })
+    }
+
+    fn execute_with_retry<F>(&self, mut op: F) -> Result<(), sqlite::Error>
+    where
+        F: FnMut() -> Result<(), sqlite::Error>,
+    {
         let mut retries = 0;
         loop {
-            match self.db.execute(statement.to_string()) {
+            match op() {
                 Ok(()) => break,
                 Err(e) => {
                     // e.code follows SQLite error types
                     // Full documentation for error types can be found on https://www.sqlite.org/rescode.html
                     // Error 5 is SQLITE_BUSY
-                    if e.code.unwrap() != 5 {
+                    if e.code != Some(5) {
                         return Err(e);
                     }
                     retries = retries + 1;
@@ -186,89 +239,130 @@ impl<'a> Batch<'_> {
     pub fn put(&self, key: &[u8], value: Serializable) -> Result<(), Error> {
         // serialize value to json
         let value_s = ser::serialize(&value).unwrap();
-        let prefix = key[0] as char;
-
-        // Insert on the database
-        // TxLogEntry and OutputData make use of queriable columns
-        let mut query = match &value {
-            Serializable::TxLogEntry(t) => format!(
-                r#"INSERT INTO data
-						(key, data, prefix, q_tx_id, q_confirmed, q_tx_status)
-					VALUES
-						("{:?}", '{}', "{}", {}, {}, "{}");
-				"#,
-                key, value_s, prefix, t.id, t.confirmed, t.tx_type
-            ),
-            Serializable::OutputData(o) => format!(
-                r#"INSERT INTO data
-						(key, data, prefix, q_tx_id, q_tx_status)
-					VALUES
-						("{:?}", '{}', "{}", "{}", "{}")
-				"#,
-                key,
-                value_s,
-                prefix,
-                match o.tx_log_entry {
-                    Some(entry) => entry.to_string(),
-                    None => "".to_string(),
-                },
-                o.status
-            ),
-            _ => format!(
-                r#"INSERT INTO data
-						(key, data, prefix)
-					VALUES
-						("{:?}", '{}', "{}");
-				"#,
-                key, value_s, prefix
-            ),
-        };
+        let prefix = (key[0] as char).to_string();
+        let exists = self.exists(&key)?;
 
         // Update if the current key exists on the database
         // TxLogEntry and OutputData make use of queriable columns
-        if self.exists(&key).unwrap() {
-            query = match &value {
-                Serializable::TxLogEntry(t) => format!(
-                    r#"UPDATE data
-						SET
-							data = '{}',
-							q_tx_id = {},
-							q_confirmed = {},
-							q_tx_status = "{}"
-						WHERE
-							key = "{:?}";
+        match (exists, &value) {
+            (false, Serializable::TxLogEntry(t)) => {
+                let tx_type = t.tx_type.to_string();
+                self.store.execute_prepared(
+                    r#"INSERT INTO data
+							(key, data, prefix, q_tx_id, q_confirmed, q_tx_status)
+						VALUES
+							(?1, ?2, ?3, ?4, ?5, ?6);
 					"#,
-                    value_s, t.id, t.confirmed, t.tx_type, key
-                ),
-                Serializable::OutputData(o) => format!(
-                    r#"UPDATE data
-						SET
-							data = '{}',
-							q_tx_id = "{}",
-							q_tx_status = "{}"
-						WHERE
-							key = "{:?}";
-					"#,
-                    value_s,
-                    match o.tx_log_entry {
-                        Some(entry) => entry.to_string(),
-                        None => "".to_string(),
+                    |statement| {
+                        statement.bind((1, key))?;
+                        statement.bind((2, value_s.as_str()))?;
+                        statement.bind((3, prefix.as_str()))?;
+                        statement.bind((4, t.id as i64))?;
+                        statement.bind((5, i64::from(t.confirmed)))?;
+                        statement.bind((6, tx_type.as_str()))?;
+                        Ok(())
                     },
-                    o.status,
-                    key
-                ),
-                _ => format!(
+                )?;
+            }
+            (true, Serializable::TxLogEntry(t)) => {
+                let tx_type = t.tx_type.to_string();
+                self.store.execute_prepared(
                     r#"UPDATE data
 						SET
-							data = '{}'
+							data = ?2,
+							q_tx_id = ?3,
+							q_confirmed = ?4,
+							q_tx_status = ?5
 						WHERE
-							key = "{:?}";
+							key = ?1;
 					"#,
-                    value_s, key
-                ),
-            };
+                    |statement| {
+                        statement.bind((1, key))?;
+                        statement.bind((2, value_s.as_str()))?;
+                        statement.bind((3, t.id as i64))?;
+                        statement.bind((4, i64::from(t.confirmed)))?;
+                        statement.bind((5, tx_type.as_str()))?;
+                        Ok(())
+                    },
+                )?;
+            }
+            (false, Serializable::OutputData(o)) => {
+                let tx_status = o.status.to_string();
+                self.store.execute_prepared(
+                    r#"INSERT INTO data
+							(key, data, prefix, q_tx_id, q_tx_status)
+						VALUES
+							(?1, ?2, ?3, ?4, ?5)
+					"#,
+                    |statement| {
+                        statement.bind((1, key))?;
+                        statement.bind((2, value_s.as_str()))?;
+                        statement.bind((3, prefix.as_str()))?;
+                        match o.tx_log_entry {
+                            Some(entry) => statement.bind((4, entry as i64))?,
+                            None => statement.bind((4, Value::Null))?,
+                        }
+                        statement.bind((5, tx_status.as_str()))?;
+                        Ok(())
+                    },
+                )?;
+            }
+            (true, Serializable::OutputData(o)) => {
+                let tx_status = o.status.to_string();
+                self.store.execute_prepared(
+                    r#"UPDATE data
+						SET
+							data = ?2,
+							q_tx_id = ?3,
+							q_tx_status = ?4
+						WHERE
+							key = ?1;
+					"#,
+                    |statement| {
+                        statement.bind((1, key))?;
+                        statement.bind((2, value_s.as_str()))?;
+                        match o.tx_log_entry {
+                            Some(entry) => statement.bind((3, entry as i64))?,
+                            None => statement.bind((3, Value::Null))?,
+                        }
+                        statement.bind((4, tx_status.as_str()))?;
+                        Ok(())
+                    },
+                )?;
+            }
+            (false, _) => {
+                self.store.execute_prepared(
+                    r#"INSERT INTO data
+							(key, data, prefix)
+						VALUES
+							(?1, ?2, ?3);
+					"#,
+                    |statement| {
+                        statement.bind((1, key))?;
+                        statement.bind((2, value_s.as_str()))?;
+                        statement.bind((3, prefix.as_str()))?;
+                        Ok(())
+                    },
+                )?;
+            }
+            (true, _) => {
+                self.store.execute_prepared(
+                    r#"UPDATE data
+						SET
+							data = ?2
+						WHERE
+							key = ?1;
+					"#,
+                    |statement| {
+                        statement.bind((1, key))?;
+                        statement.bind((2, value_s.as_str()))?;
+                        Ok(())
+                    },
+                )?;
+            }
         }
-        Ok(self.store.execute(query).unwrap())
+
+        Ok(())
     }
 
     /// Writes a single value to the db, given a key and a Serializable enum
@@ -291,17 +385,19 @@ impl<'a> Batch<'_> {
 
     /// Deletes a key from the db
     pub fn delete(&self, key: &[u8]) -> Result<(), Error> {
-        let statement = format!(
+        self.store.execute_prepared(
             r#"
 		DELETE
 		FROM
 			data
 		WHERE
-			key = "{:?}"
+			key = ?1
 		"#,
-            key
-        );
-        self.store.execute(statement)?;
+            |statement| {
+                statement.bind((1, key))?;
+                Ok(())
+            },
+        )?;
         Ok(())
     }
 

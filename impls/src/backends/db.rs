@@ -254,15 +254,15 @@ impl<'a> Batch<'_> {
         // serialize value to json
         let value_s = ser::serialize(&value).unwrap();
         let prefix = (key[0] as char).to_string();
-        let exists = self.exists(&key)?;
 
-        // Update if the current key exists on the database
+        // Use INSERT OR REPLACE to atomically handle both insert and update cases
+        // This avoids race conditions that can occur with check-then-act patterns
         // TxLogEntry and OutputData make use of queriable columns
-        match (exists, &value) {
-            (false, Serializable::TxLogEntry(t)) => {
+        match &value {
+            Serializable::TxLogEntry(t) => {
                 let tx_type = t.tx_type.to_string();
                 self.store.execute_prepared(
-                    r#"INSERT INTO data
+                    r#"INSERT OR REPLACE INTO data
 							(key, data, prefix, q_tx_id, q_confirmed, q_tx_status)
 						VALUES
 							(?1, ?2, ?3, ?4, ?5, ?6);
@@ -278,32 +278,10 @@ impl<'a> Batch<'_> {
                     },
                 )?;
             }
-            (true, Serializable::TxLogEntry(t)) => {
-                let tx_type = t.tx_type.to_string();
-                self.store.execute_prepared(
-                    r#"UPDATE data
-						SET
-							data = ?2,
-							q_tx_id = ?3,
-							q_confirmed = ?4,
-							q_tx_status = ?5
-						WHERE
-							key = ?1;
-					"#,
-                    |statement| {
-                        statement.bind((1, key))?;
-                        statement.bind((2, value_s.as_str()))?;
-                        statement.bind((3, t.id as i64))?;
-                        statement.bind((4, i64::from(t.confirmed)))?;
-                        statement.bind((5, tx_type.as_str()))?;
-                        Ok(())
-                    },
-                )?;
-            }
-            (false, Serializable::OutputData(o)) => {
+            Serializable::OutputData(o) => {
                 let tx_status = o.status.to_string();
                 self.store.execute_prepared(
-                    r#"INSERT INTO data
+                    r#"INSERT OR REPLACE INTO data
 							(key, data, prefix, q_tx_id, q_tx_status)
 						VALUES
 							(?1, ?2, ?3, ?4, ?5)
@@ -321,32 +299,9 @@ impl<'a> Batch<'_> {
                     },
                 )?;
             }
-            (true, Serializable::OutputData(o)) => {
-                let tx_status = o.status.to_string();
+            _ => {
                 self.store.execute_prepared(
-                    r#"UPDATE data
-						SET
-							data = ?2,
-							q_tx_id = ?3,
-							q_tx_status = ?4
-						WHERE
-							key = ?1;
-					"#,
-                    |statement| {
-                        statement.bind((1, key))?;
-                        statement.bind((2, value_s.as_str()))?;
-                        match o.tx_log_entry {
-                            Some(entry) => statement.bind((3, entry as i64))?,
-                            None => statement.bind((3, Value::Null))?,
-                        }
-                        statement.bind((4, tx_status.as_str()))?;
-                        Ok(())
-                    },
-                )?;
-            }
-            (false, _) => {
-                self.store.execute_prepared(
-                    r#"INSERT INTO data
+                    r#"INSERT OR REPLACE INTO data
 							(key, data, prefix)
 						VALUES
 							(?1, ?2, ?3);
@@ -355,21 +310,6 @@ impl<'a> Batch<'_> {
                         statement.bind((1, key))?;
                         statement.bind((2, value_s.as_str()))?;
                         statement.bind((3, prefix.as_str()))?;
-                        Ok(())
-                    },
-                )?;
-            }
-            (true, _) => {
-                self.store.execute_prepared(
-                    r#"UPDATE data
-						SET
-							data = ?2
-						WHERE
-							key = ?1;
-					"#,
-                    |statement| {
-                        statement.bind((1, key))?;
-                        statement.bind((2, value_s.as_str()))?;
                         Ok(())
                     },
                 )?;

@@ -175,6 +175,7 @@ use crate::impls::{
 };
 use crate::impls::{EmojiSlate, PathToSlate, SlatePutter};
 use crate::keychain;
+use crate::libwallet::api_impl::owner::PostedTxStatus;
 use crate::libwallet::{
     address, Error, InitTxArgs, IssueInvoiceTxArgs, NodeClient, PaymentProof, WalletInst,
     WalletLCProvider,
@@ -604,21 +605,36 @@ where
                 match result {
                     Ok(_) => {
                         // Wait for mempool status and update if found
-                        let found = api.wait_for_tx_in_mempool(
+                        let status = api.wait_for_posted_tx(
                             m, &slate.id, 1,   // poll every 1 second
                             240, // up to 240 attempts (4 minutes)
                         );
-                        if let Ok(true) = found {
-                            let _ = api.update_mempool_status(m, &slate);
-                            info!(
-								"Transaction with slate_id {} found in mempool and marked as TxSentMempool.",
-								slate.id
-							);
-                        } else {
-                            warn!(
-                                "Transaction with slate_id {} not found in mempool after waiting.",
-                                slate.id
-                            );
+                        match status {
+                            Ok(PostedTxStatus::InMempool) => {
+                                let _ = api.update_mempool_status(m, &slate);
+                                info!(
+									"Transaction with slate_id {} found in mempool and marked as TxSentMempool.",
+									slate.id
+								);
+                            }
+                            Ok(PostedTxStatus::OnChain) => {
+                                info!(
+                                    "Transaction with slate_id {} is already on chain.",
+                                    slate.id
+                                );
+                            }
+                            Ok(PostedTxStatus::NotFound) => {
+                                warn!(
+									"Transaction with slate_id {} not found in mempool after waiting.",
+									slate.id
+								);
+                            }
+                            Err(e) => {
+                                warn!(
+									"Could not look for transaction with slate_id {} in the mempool: {}",
+									slate.id, e
+								);
+                            }
                         }
                         info!(
 							"Transaction sent successfully, check the wallet again for confirmation."
@@ -774,21 +790,36 @@ where
                 match result {
                     Ok(_) => {
                         // Wait for mempool status and update if found
-                        let found = api.wait_for_tx_in_mempool(
+                        let status = api.wait_for_posted_tx(
                             m, &slate.id, 1,   // poll every 1 second
                             240, // up to 240 attempts (4 minutes)
                         );
-                        if let Ok(true) = found {
-                            let _ = api.update_mempool_status(m, &slate);
-                            info!(
-								"Transaction with slate_id {} found in mempool and marked as TxSentMempool.",
-								slate.id
-							);
-                        } else {
-                            warn!(
-                                "Transaction with slate_id {} not found in mempool after waiting.",
-                                slate.id
-                            );
+                        match status {
+                            Ok(PostedTxStatus::InMempool) => {
+                                let _ = api.update_mempool_status(m, &slate);
+                                info!(
+									"Transaction with slate_id {} found in mempool and marked as TxSentMempool.",
+									slate.id
+								);
+                            }
+                            Ok(PostedTxStatus::OnChain) => {
+                                info!(
+                                    "Transaction with slate_id {} is already on chain.",
+                                    slate.id
+                                );
+                            }
+                            Ok(PostedTxStatus::NotFound) => {
+                                warn!(
+									"Transaction with slate_id {} not found in mempool after waiting.",
+									slate.id
+								);
+                            }
+                            Err(e) => {
+                                warn!(
+									"Could not look for transaction with slate_id {} in the mempool: {}",
+									slate.id, e
+								);
+                            }
                         }
                         info!(
 							"Transaction sent successfully, check the wallet again for confirmation."

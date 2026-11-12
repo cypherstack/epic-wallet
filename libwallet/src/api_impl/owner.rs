@@ -675,9 +675,20 @@ where
     tx::update_mempool_status(wallet, keychain_mask, slate)
 }
 
+/// Where a posted transaction was seen by [`wait_for_posted_tx`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PostedTxStatus {
+    /// In the node's mempool; the tx log entry was marked accordingly.
+    InMempool,
+    /// Already in a block. The tx log entry is left for the next refresh to confirm.
+    OnChain,
+    /// In neither after all attempts.
+    NotFound,
+}
+
 /// Polls the node mempool for the given transaction and marks it as TxSentMempool if found.
-/// Returns Ok(false) without waiting further once the transaction's kernel is on chain,
-/// since a transaction mined between two polls never shows up in the pool.
+/// Returns Ok(false) both when the transaction was not found in time and when its kernel is
+/// already on chain; [`wait_for_posted_tx`] tells the two apart.
 pub fn wait_for_tx_in_mempool<'a, L, C, K>(
     wallet_inst: Arc<Mutex<Box<dyn WalletInst<'a, L, C, K>>>>,
     keychain_mask: Option<&SecretKey>,
@@ -690,14 +701,35 @@ where
     C: NodeClient + 'a,
     K: Keychain + 'a,
 {
+    wait_for_posted_tx(
+        wallet_inst,
+        keychain_mask,
+        tx_slate_id,
+        poll_interval_secs,
+        max_attempts,
+    )
+    .map(|status| status == PostedTxStatus::InMempool)
+}
+
+/// Polls the node for a transaction that was just posted. Marks it as TxSentMempool (or
+/// TxReceivedMempool) once it is in the mempool, and stops waiting once its kernel is on
+/// chain, since a transaction mined between two polls never shows up in the pool.
+pub fn wait_for_posted_tx<'a, L, C, K>(
+    wallet_inst: Arc<Mutex<Box<dyn WalletInst<'a, L, C, K>>>>,
+    keychain_mask: Option<&SecretKey>,
+    tx_slate_id: &uuid::Uuid,
+    poll_interval_secs: u64,
+    max_attempts: u32,
+) -> Result<PostedTxStatus, Error>
+where
+    L: WalletLCProvider<'a, C, K>,
+    C: NodeClient + 'a,
+    K: Keychain + 'a,
+{
     // Only look for the kernel in the last few blocks; the tx was just posted.
-    let kernel_min_height = {
-        wallet_lock!(wallet_inst, w);
-        w.w2n_client()
-            .get_chain_tip()
-            .map(|(height, _)| height.saturating_sub(5).max(1))
-            .ok()
-    };
+    // Fetched on the first poll that needs it, and again on later polls for as
+    // long as the node fails to answer.
+    let mut kernel_min_height: Option<u64> = None;
     for _ in 0..max_attempts {
         let mempool = {
             wallet_lock!(wallet_inst, w);
@@ -745,7 +777,15 @@ where
             }
         }
         if updated {
-            return Ok(true);
+            return Ok(PostedTxStatus::InMempool);
+        }
+        if kernel_min_height.is_none() {
+            wallet_lock!(wallet_inst, w);
+            kernel_min_height = w
+                .w2n_client()
+                .get_chain_tip()
+                .map(|(height, _)| height.saturating_sub(5).max(1))
+                .ok();
         }
         if let Some(min_height) = kernel_min_height {
             let excesses: Vec<_> = txs
@@ -756,17 +796,13 @@ where
             for excess in excesses {
                 wallet_lock!(wallet_inst, w);
                 if let Ok(Some(_)) = w.w2n_client().get_kernel(&excess, Some(min_height), None) {
-                    info!(
-                        "Transaction with slate_id {} is already on chain.",
-                        tx_slate_id
-                    );
-                    return Ok(false);
+                    return Ok(PostedTxStatus::OnChain);
                 }
             }
         }
         thread::sleep(Duration::from_secs(poll_interval_secs));
     }
-    Ok(false)
+    Ok(PostedTxStatus::NotFound)
 }
 
 /// cancel tx

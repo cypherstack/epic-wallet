@@ -2450,6 +2450,10 @@ where
 	}
 
 	/// Wait for a transaction to appear in the mempool.
+	///
+	/// Returns `Ok(false)` both when the transaction was not found in time and
+	/// when it is already on chain. Use [`Owner::wait_for_posted_tx`] to tell
+	/// the two apart.
 	pub fn wait_for_tx_in_mempool(
 		&self,
 		mask: Option<&SecretKey>,
@@ -2458,6 +2462,26 @@ where
 		max_attempts: u32,
 	) -> Result<bool, Error> {
 		crate::libwallet::api_impl::owner::wait_for_tx_in_mempool(
+			self.wallet_inst.clone(),
+			mask,
+			tx_slate_id,
+			poll_interval_secs,
+			max_attempts,
+		)
+	}
+
+	/// Wait for a posted transaction to appear in the mempool or on chain.
+	///
+	/// The tx log entry is marked as being in the mempool when it is found
+	/// there. The wait ends early once the transaction's kernel is on chain.
+	pub fn wait_for_posted_tx(
+		&self,
+		mask: Option<&SecretKey>,
+		tx_slate_id: &Uuid,
+		poll_interval_secs: u64,
+		max_attempts: u32,
+	) -> Result<owner::PostedTxStatus, Error> {
+		crate::libwallet::api_impl::owner::wait_for_posted_tx(
 			self.wallet_inst.clone(),
 			mask,
 			tx_slate_id,

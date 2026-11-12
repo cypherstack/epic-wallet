@@ -41,7 +41,7 @@ use crate::util::Mutex;
 use crate::test_framework::pow::PoWType;
 use serde_json;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -94,6 +94,8 @@ where
 	pub running: Arc<AtomicBool>,
 	/// last posted transaction
 	pub last_posted_tx: Option<Transaction>,
+	/// number of upcoming chain tip requests to answer with an error
+	pub chain_tip_failures: Arc<AtomicUsize>,
 }
 
 impl<'a, L, C, K> WalletProxy<'a, L, C, K>
@@ -124,6 +126,7 @@ where
 			wallets: HashMap::new(),
 			running: Arc::new(AtomicBool::new(false)),
 			last_posted_tx: None,
+			chain_tip_failures: Arc::new(AtomicUsize::new(0)),
 		};
 		retval
 	}
@@ -288,14 +291,24 @@ where
 		&mut self,
 		m: WalletProxyMessage,
 	) -> Result<WalletProxyMessage, libwallet::Error> {
-		let height = self.chain.head().unwrap().height;
-		let hash = util::to_hex(self.chain.head().unwrap().last_block_h.to_vec());
+		let fail = self
+			.chain_tip_failures
+			.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
+			.is_ok();
+		let body = if fail {
+			// the client reports a body it cannot parse as an error
+			"".to_owned()
+		} else {
+			let height = self.chain.head().unwrap().height;
+			let hash = util::to_hex(self.chain.head().unwrap().last_block_h.to_vec());
+			format!("{},{}", height, hash)
+		};
 
 		Ok(WalletProxyMessage {
 			sender_id: "node".to_owned(),
 			dest: m.sender_id,
 			method: m.method,
-			body: format!("{},{}", height, hash),
+			body,
 		})
 	}
 
@@ -605,7 +618,12 @@ impl NodeClient for LocalWalletClient {
 			libwallet::Error::ClientCallback("Parsing get_height response".to_owned())
 		})?;
 		let split: Vec<&str> = res.split(",").collect();
-		Ok((split[0].parse::<u64>().unwrap(), split[1].to_owned()))
+		match (split.get(0).and_then(|h| h.parse::<u64>().ok()), split.get(1)) {
+			(Some(height), Some(hash)) => Ok((height, hash.to_string())),
+			_ => Err(libwallet::Error::ClientCallback(
+				"Parsing get_height response".to_owned(),
+			)),
+		}
 	}
 
 	/// Retrieve outputs from node

@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Test that waiting for a posted tx in the pool stops once the tx is mined
+//! Test that waiting for a posted tx reports where it was seen, and stops once the tx is mined
 #[macro_use]
 extern crate log;
 extern crate epic_wallet_controller as wallet;
@@ -19,8 +19,9 @@ extern crate epic_wallet_impls as impls;
 
 use epic_wallet_libwallet as libwallet;
 use impls::test_framework::{self, LocalWalletClient};
-use libwallet::{InitTxArgs, Slate};
-use std::sync::atomic::AtomicBool;
+use libwallet::api_impl::owner::PostedTxStatus;
+use libwallet::{InitTxArgs, Slate, TxLogEntryType};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -31,6 +32,7 @@ use common::{clean_output_dir, create_wallet_proxy, setup};
 fn mempool_wait_test_impl(test_dir: &'static str) -> Result<(), libwallet::Error> {
     let mut wallet_proxy = create_wallet_proxy(test_dir);
     let chain = wallet_proxy.chain.clone();
+    let chain_tip_failures = wallet_proxy.chain_tip_failures.clone();
 
     create_wallet_and_add!(
         client1,
@@ -101,14 +103,47 @@ fn mempool_wait_test_impl(test_dir: &'static str) -> Result<(), libwallet::Error
         wallet1.clone(),
         mask1,
         |api, m| {
+            // The sent entry of a slate, as the default account stores it.
+            let sent_type = |slate: &Slate| -> Result<TxLogEntryType, libwallet::Error> {
+                let txs = api
+                    .retrieve_txs(m, false, None, Some(slate.id), None, None, None)?
+                    .txs;
+                let sent: Vec<_> = txs
+                    .iter()
+                    .filter(|t| t.amount_debited > 0)
+                    .map(|t| t.tx_type.clone())
+                    .collect();
+                assert_eq!(sent.len(), 1);
+                Ok(sent[0].clone())
+            };
+            let mined_before = sent_type(&mined)?;
+            assert_ne!(mined_before, TxLogEntryType::TxSentMempool);
+            assert_ne!(sent_type(&in_pool)?, TxLogEntryType::TxSentMempool);
+
             // The first tx is on chain and no longer in the pool: the wait must
-            // return straight away instead of polling for all 30 attempts.
+            // say so straight away instead of polling for all 30 attempts.
             let start = Instant::now();
-            let found = api.wait_for_tx_in_mempool(m, &mined.id, 1, 30)?;
-            assert!(!found);
+            let status = api.wait_for_posted_tx(m, &mined.id, 1, 30)?;
+            assert_eq!(status, PostedTxStatus::OnChain);
+            assert!(start.elapsed() < Duration::from_secs(5));
+            // It was never seen in the pool, so its entry is left as it was.
+            assert_eq!(sent_type(&mined)?, mined_before);
+
+            // One failed chain tip request costs one poll, not the whole wait.
+            chain_tip_failures.store(1, Ordering::Relaxed);
+            let start = Instant::now();
+            let status = api.wait_for_posted_tx(m, &mined.id, 1, 30)?;
+            assert_eq!(status, PostedTxStatus::OnChain);
+            assert_eq!(chain_tip_failures.load(Ordering::Relaxed), 0);
             assert!(start.elapsed() < Duration::from_secs(5));
 
-            // The second one is what the test node reports as its pool.
+            // The older call cannot tell "on chain" from "not found".
+            assert!(!api.wait_for_tx_in_mempool(m, &mined.id, 1, 30)?);
+
+            // The second tx is what the test node reports as its pool.
+            let status = api.wait_for_posted_tx(m, &in_pool.id, 1, 30)?;
+            assert_eq!(status, PostedTxStatus::InMempool);
+            assert_eq!(sent_type(&in_pool)?, TxLogEntryType::TxSentMempool);
             assert!(api.wait_for_tx_in_mempool(m, &in_pool.id, 1, 30)?);
             Ok(())
         },

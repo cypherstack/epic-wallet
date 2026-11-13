@@ -96,6 +96,8 @@ where
 	pub last_posted_tx: Option<Transaction>,
 	/// number of upcoming chain tip requests to answer with an error
 	pub chain_tip_failures: Arc<AtomicUsize>,
+	/// number of upcoming kernel requests to answer with an error
+	pub kernel_failures: Arc<AtomicUsize>,
 }
 
 impl<'a, L, C, K> WalletProxy<'a, L, C, K>
@@ -127,6 +129,7 @@ where
 			running: Arc::new(AtomicBool::new(false)),
 			last_posted_tx: None,
 			chain_tip_failures: Arc::new(AtomicUsize::new(0)),
+			kernel_failures: Arc::new(AtomicUsize::new(0)),
 		};
 		retval
 	}
@@ -420,6 +423,18 @@ where
 		&mut self,
 		m: WalletProxyMessage,
 	) -> Result<WalletProxyMessage, libwallet::Error> {
+		let fail = self
+			.kernel_failures
+			.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
+			.is_ok();
+		if fail {
+			return Ok(WalletProxyMessage {
+				sender_id: "node".to_owned(),
+				dest: m.sender_id,
+				method: m.method,
+				body: "".to_owned(),
+			});
+		}
 		let split = m.body.split(",").collect::<Vec<&str>>();
 		let excess = split[0].parse::<String>().unwrap();
 		let min = split[1].parse::<u64>().unwrap();

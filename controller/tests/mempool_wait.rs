@@ -33,6 +33,7 @@ fn mempool_wait_test_impl(test_dir: &'static str) -> Result<(), libwallet::Error
     let mut wallet_proxy = create_wallet_proxy(test_dir);
     let chain = wallet_proxy.chain.clone();
     let chain_tip_failures = wallet_proxy.chain_tip_failures.clone();
+    let kernel_failures = wallet_proxy.kernel_failures.clone();
 
     create_wallet_and_add!(
         client1,
@@ -136,6 +137,23 @@ fn mempool_wait_test_impl(test_dir: &'static str) -> Result<(), libwallet::Error
             assert_eq!(status, PostedTxStatus::OnChain);
             assert_eq!(chain_tip_failures.load(Ordering::Relaxed), 0);
             assert!(start.elapsed() < Duration::from_secs(5));
+
+            // A transient kernel lookup failure is retried too.
+            kernel_failures.store(2, Ordering::Relaxed);
+            let status = api.wait_for_posted_tx(m, &mined.id, 0, 2)?;
+            assert_eq!(status, PostedTxStatus::OnChain);
+            assert_eq!(kernel_failures.load(Ordering::Relaxed), 0);
+
+            // If the chain cannot be inspected on the final attempt, do not
+            // misreport the transaction as absent from both pool and chain.
+            chain_tip_failures.store(2, Ordering::Relaxed);
+            assert!(api.wait_for_posted_tx(m, &mined.id, 0, 2).is_err());
+            assert_eq!(chain_tip_failures.load(Ordering::Relaxed), 0);
+
+            kernel_failures.store(100, Ordering::Relaxed);
+            assert!(api.wait_for_posted_tx(m, &mined.id, 0, 2).is_err());
+            assert!(kernel_failures.load(Ordering::Relaxed) < 100);
+            kernel_failures.store(0, Ordering::Relaxed);
 
             // The older call cannot tell "on chain" from "not found".
             assert!(!api.wait_for_tx_in_mempool(m, &mined.id, 1, 30)?);

@@ -730,7 +730,8 @@ where
     // Fetched on the first poll that needs it, and again on later polls for as
     // long as the node fails to answer.
     let mut kernel_min_height: Option<u64> = None;
-    for _ in 0..max_attempts {
+    let mut last_chain_error = None;
+    for attempt in 0..max_attempts {
         let mempool = {
             wallet_lock!(wallet_inst, w);
             w.w2n_client().get_mempool()?
@@ -779,13 +780,15 @@ where
         if updated {
             return Ok(PostedTxStatus::InMempool);
         }
+        let mut chain_error = None;
         if kernel_min_height.is_none() {
             wallet_lock!(wallet_inst, w);
-            kernel_min_height = w
-                .w2n_client()
-                .get_chain_tip()
-                .map(|(height, _)| height.saturating_sub(5).max(1))
-                .ok();
+            match w.w2n_client().get_chain_tip() {
+                Ok((height, _)) => {
+                    kernel_min_height = Some(height.saturating_sub(5).max(1));
+                }
+                Err(e) => chain_error = Some(e),
+            }
         }
         if let Some(min_height) = kernel_min_height {
             let excesses: Vec<_> = txs
@@ -795,14 +798,25 @@ where
                 .collect();
             for excess in excesses {
                 wallet_lock!(wallet_inst, w);
-                if let Ok(Some(_)) = w.w2n_client().get_kernel(&excess, Some(min_height), None) {
-                    return Ok(PostedTxStatus::OnChain);
+                match w.w2n_client().get_kernel(&excess, Some(min_height), None) {
+                    Ok(Some(_)) => return Ok(PostedTxStatus::OnChain),
+                    Ok(None) => {}
+                    Err(e) => chain_error = Some(e),
                 }
             }
         }
-        thread::sleep(Duration::from_secs(poll_interval_secs));
+        // A later successful chain observation supersedes an earlier error.
+        // If the final observation fails, do not report the transaction as
+        // definitively absent from both the pool and the chain.
+        last_chain_error = chain_error;
+        if attempt + 1 < max_attempts {
+            thread::sleep(Duration::from_secs(poll_interval_secs));
+        }
     }
-    Ok(PostedTxStatus::NotFound)
+    match last_chain_error {
+        Some(e) => Err(e),
+        None => Ok(PostedTxStatus::NotFound),
+    }
 }
 
 /// cancel tx

@@ -323,6 +323,7 @@ where
                     &mut reconnections,
                     is_node_synced.clone(),
                     tor_config.clone(),
+                    Arc::new(AtomicBool::new(false)),
                 );
                 info!("Reconnect to epicbox");
                 match listener {

@@ -75,6 +75,27 @@ const CONNECTION_ERR_MSG: &str = "\nCan't connect to the epicbox server!\n\
 
 const EPICBOX_PROTOCOL_VERSION: &str = "3.0.0";
 
+const EPICBOX_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
+fn configure_epicbox_read_timeout(
+	socket: &mut WebSocket<MaybeTlsStream<TcpStream>>,
+) -> Result<(), Error> {
+	let timeout = Some(EPICBOX_READ_TIMEOUT);
+
+	match socket.get_mut() {
+		MaybeTlsStream::Plain(stream) => stream.set_read_timeout(timeout)?,
+		MaybeTlsStream::NativeTls(stream) => stream.get_ref().set_read_timeout(timeout)?,
+		_ => {
+			return Err(Error::GenericError(
+				"The active TLS backend does not support Epicbox listener cancellation"
+					.to_string(),
+			));
+		}
+	}
+
+	Ok(())
+}
+
 /// Epicbox 'plugin' implementation
 pub enum CloseReason {
 	Normal,
@@ -127,6 +148,7 @@ impl EpicboxListenChannel {
 		reconnections: &mut u32,
 		is_node_synced: Arc<AtomicBool>,
 		tor_config: TorConfig,
+		stopping: Arc<AtomicBool>,
 	) -> Result<(), Error>
 	where
 		L: WalletLCProvider<'static, C, K> + 'static,
@@ -171,11 +193,12 @@ impl EpicboxListenChannel {
 		let (tx, _rx): (Sender<bool>, Receiver<bool>) = channel();
 
 		debug!("Connecting to the epicbox server at {} ..", url.clone());
-		let (socket, _response) = connect(url.clone()).map_err(|e| {
+		let (mut socket, _response) = connect(url.clone()).map_err(|e| {
 			warn!("{}", Error::EpicboxTungstenite(format!("{}", e).into()));
 			*reconnections += 1;
 			Error::EpicboxTungstenite(format!("{}", e).into())
 		})?;
+		configure_epicbox_read_timeout(&mut socket)?;
 
 		let publisher =
 			EpicboxPublisher::new(address.clone(), sec_key, socket, tx, "listener".to_string())?;
@@ -197,7 +220,7 @@ impl EpicboxListenChannel {
 		.expect("Could not init epicbox listener!");
 
 		info!("Starting epicbox listener for: {}", address);
-		subscriber.start(controller)
+		subscriber.start(controller, stopping)
 	}
 }
 impl EpicboxChannel {
@@ -333,7 +356,7 @@ where
 		.expect("Could not init epicbox controller!");
 
 		csubscriber
-			.start(controller)
+			.start(controller, Arc::new(AtomicBool::new(false)))
 			.expect("Could not start epicbox controller!");
 		()
 	});
@@ -562,31 +585,46 @@ where
 
 		// --- Blocking mempool observation after post_tx ---
 		let tx_slate_id = finalized_slate.id;
-		let found = owner::wait_for_tx_in_mempool(
+		let status = owner::wait_for_posted_tx(
 			self.wallet.clone(),
 			self.keychain_mask.as_ref(),
 			&tx_slate_id,
 			1,   // poll every 1 second
 			240, // up to 240 attempts (4 minutes)
 		);
-		if let Ok(true) = found {
-			{
-				wallet_lock!(self.wallet, w);
-				owner::update_mempool_status(
-					&mut **w,
-					self.keychain_mask.as_ref(),
-					&finalized_slate,
-				)?;
+		match status {
+			Ok(owner::PostedTxStatus::InMempool) => {
+				{
+					wallet_lock!(self.wallet, w);
+					owner::update_mempool_status(
+						&mut **w,
+						self.keychain_mask.as_ref(),
+						&finalized_slate,
+					)?;
+				}
+				info!(
+					"Transaction with slate_id {} found in mempool and marked as TxSentMempool.",
+					tx_slate_id
+				);
 			}
-			info!(
-				"Transaction with slate_id {} found in mempool and marked as TxSentMempool.",
-				tx_slate_id
-			);
-		} else {
-			warn!(
-				"Transaction with slate_id {} not found in mempool after waiting.",
-				tx_slate_id
-			);
+			Ok(owner::PostedTxStatus::OnChain) => {
+				info!(
+					"Transaction with slate_id {} is already on chain.",
+					tx_slate_id
+				);
+			}
+			Ok(owner::PostedTxStatus::NotFound) => {
+				warn!(
+					"Transaction with slate_id {} not found in mempool after waiting.",
+					tx_slate_id
+				);
+			}
+			Err(e) => {
+				warn!(
+					"Could not look for transaction with slate_id {} in the mempool: {}",
+					tx_slate_id, e
+				);
+			}
 		}
 
 		Ok(true)
@@ -668,7 +706,11 @@ where
 }
 
 impl EpicboxSubscriber {
-	fn start<P, L, C, K>(&mut self, handler: EpicboxController<P, L, C, K>) -> Result<(), Error>
+	fn start<P, L, C, K>(
+		&mut self,
+		handler: EpicboxController<P, L, C, K>,
+		stopping: Arc<AtomicBool>,
+	) -> Result<(), Error>
 	where
 		P: Publisher,
 		L: WalletLCProvider<'static, C, K> + 'static,
@@ -681,6 +723,7 @@ impl EpicboxSubscriber {
 			handler,
 			&self.wallet_mode,
 			self.is_node_synced.clone(),
+			stopping,
 		)
 	}
 
@@ -725,6 +768,7 @@ impl EpicboxBroker {
 		handler: EpicboxController<P, L, C, K>,
 		wallet_mode: &String,
 		is_node_synced: Arc<AtomicBool>,
+		stopping: Arc<AtomicBool>,
 	) -> Result<(), Error>
 	where
 		P: Publisher,
@@ -750,16 +794,39 @@ impl EpicboxBroker {
 		let wallet_mode = wallet_mode;
 
 		let res = loop {
+			if stopping.load(std::sync::atomic::Ordering::SeqCst) {
+				debug!("External Epicbox listener stop signal received");
+				match client.sender.lock().close(None) {
+					Ok(_) => debug!("Epicbox websocket close frame sent"),
+					Err(e) => debug!("Unable to send Epicbox websocket close frame: {:?}", e),
+				}
+				handler.lock().on_close(CloseReason::Normal);
+				break Ok(());
+			}
+
 			// Pause if node is not synced
 			if !is_node_synced.load(std::sync::atomic::Ordering::SeqCst) {
 				warn!("Node not synced, pausing Epicbox message processing...");
-				std::thread::sleep(std::time::Duration::from_secs(5));
+				for _ in 0..20 {
+					if stopping.load(std::sync::atomic::Ordering::SeqCst) {
+						break;
+					}
+					std::thread::sleep(std::time::Duration::from_millis(250));
+				}
 				continue;
 			}
 
 			let err = client.sender.lock().read();
 
 			match err {
+				Err(ErrorTungstenite::Io(ref e))
+					if matches!(
+						e.kind(),
+						std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+					) =>
+				{
+					continue;
+				}
 				Err(e) => {
 					*handler.lock().reconnections += 1;
 					error!("Error reading message {:?}", e);
@@ -1021,5 +1088,33 @@ where
 	fn send(&self, request: &ProtocolRequestV2) -> Result<(), ErrorTungstenite> {
 		let request = serde_json::to_string(&request).unwrap();
 		self.sender.lock().send(Message::Text(request.into()))
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use std::net::TcpListener;
+	use tungstenite::protocol::Role;
+
+	#[test]
+	fn configures_plain_websocket_read_timeout() {
+		let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+		let address = listener.local_addr().unwrap();
+		let client = TcpStream::connect(address).unwrap();
+		let (_server, _) = listener.accept().unwrap();
+		let mut socket = WebSocket::from_raw_socket(
+			MaybeTlsStream::Plain(client),
+			Role::Client,
+			None,
+		);
+
+		configure_epicbox_read_timeout(&mut socket).unwrap();
+
+		let timeout = match socket.get_ref() {
+			MaybeTlsStream::Plain(stream) => stream.read_timeout().unwrap(),
+			_ => unreachable!("test constructs a plain TCP websocket"),
+		};
+		assert_eq!(timeout, Some(EPICBOX_READ_TIMEOUT));
 	}
 }
